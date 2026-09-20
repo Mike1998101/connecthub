@@ -1,20 +1,36 @@
 import { NextResponse } from "next/server";
 import { getState, mutate, stripExternalUrls, uid, nestComments } from "@/lib/store";
+import { suggestSimilarPosts } from "@/lib/similarity";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
+  const { searchParams } = new URL(req.url);
   const s = getState();
   const post = s.posts.find((p) => p.id === id);
   if (!post) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (searchParams.get("similar") === "1") {
+    const similar = suggestSimilarPosts(post, s.posts, 6).map((sp) => ({
+      id: sp.id,
+      title: sp.title,
+      kind: sp.kind,
+      sourcePlatform: sp.sourcePlatform,
+      sourceGroup: sp.sourceGroup,
+      clusterId: sp.clusterId,
+    }));
+    return NextResponse.json({ similar, seed: { id: post.id, clusterId: post.clusterId } });
+  }
+
   return NextResponse.json({
     post: {
       ...post,
       author: s.users.find((u) => u.id === post.authorId),
       topics: s.topics.filter((t) => post.topicIds.includes(t.id)),
       comments: nestComments(post.id),
+      similar: suggestSimilarPosts(post, s.posts, 4),
     },
   });
 }

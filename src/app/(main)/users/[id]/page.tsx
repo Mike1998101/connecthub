@@ -24,6 +24,12 @@ export default function UserProfilePage() {
   const params = useParams<{ id: string }>();
   const [user, setUser] = useState<Profile | null>(null);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [comments, setComments] = useState<
+    { id: string; body: string; post?: { id: string; title: string } | null }[]
+  >([]);
+  const [following, setFollowing] = useState<
+    { id: string; displayName: string; username: string }[]
+  >([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [friendship, setFriendship] = useState<{ status: string } | null>(null);
   const [meId, setMeId] = useState<string | null>(null);
@@ -37,6 +43,8 @@ export default function UserProfilePage() {
     setMeId(auth.user?.id || null);
     setUser(data.user || null);
     setPosts(data.posts || []);
+    setComments(data.comments || []);
+    setFollowing((data.following || []).filter(Boolean));
     setIsFollowing(!!data.isFollowing);
     setFriendship(data.friendship || null);
   }, [params.id]);
@@ -115,7 +123,7 @@ export default function UserProfilePage() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <button type="button" className="btn-primary text-sm" onClick={() => social("friend")}>
                   {friendship?.status === "accepted"
-                    ? "Friends"
+                    ? "Friends ✓"
                     : friendship?.status === "pending"
                       ? "Request pending"
                       : "Add friend"}
@@ -142,6 +150,39 @@ export default function UserProfilePage() {
         ))}
         {!posts.length ? <p className="text-sm text-slate-500">No public posts yet.</p> : null}
       </section>
+
+      {comments.length ? (
+        <section className="space-y-2">
+          <h2 className="font-display text-xl font-semibold text-[#16324f]">Comments</h2>
+          {comments.slice(0, 12).map((c) => (
+            <div key={c.id} className="card p-4 text-sm text-slate-700">
+              {c.body}
+              {c.post ? (
+                <p className="mt-1 text-xs text-slate-400">on {c.post.title}</p>
+              ) : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
+
+      {following.length ? (
+        <section className="space-y-2">
+          <h2 className="font-display text-xl font-semibold text-[#16324f]">Following</h2>
+          <div className="flex flex-wrap gap-2">
+            {following.map((u) =>
+              u ? (
+                <a
+                  key={u.id}
+                  href={`/users/${u.id}`}
+                  className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800"
+                >
+                  {u.displayName}
+                </a>
+              ) : null
+            )}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

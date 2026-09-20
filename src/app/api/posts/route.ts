@@ -1,17 +1,30 @@
 import { NextResponse } from "next/server";
 import { getState, mutate, stripExternalUrls, uid, nestComments } from "@/lib/store";
+import { suggestSimilarPosts } from "@/lib/similarity";
 import type { FeedSort, Post } from "@/lib/types";
+import { ensureDailyCron } from "@/lib/cron";
+
+ensureDailyCron();
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sort = (searchParams.get("sort") || "chronological") as FeedSort;
   const topic = searchParams.get("topic");
+  const group = searchParams.get("group");
   const s = getState();
+
+  if (s.settings.visibility !== "public" && !s.currentUserId) {
+    return NextResponse.json({ error: "Members only" }, { status: 401 });
+  }
+
   let posts = [...s.posts];
 
   if (topic) {
     const t = s.topics.find((x) => x.slug === topic || x.id === topic);
     if (t) posts = posts.filter((p) => p.topicIds.includes(t.id));
+  }
+  if (group) {
+    posts = posts.filter((p) => p.sourceGroup === group);
   }
 
   if (sort === "trending") {
@@ -27,9 +40,20 @@ export async function GET(req: Request) {
     author: s.users.find((u) => u.id === p.authorId),
     topics: s.topics.filter((t) => p.topicIds.includes(t.id)),
     comments: nestComments(p.id),
+    similar: suggestSimilarPosts(p, s.posts, 4).map((sp) => ({
+      id: sp.id,
+      title: sp.title,
+      kind: sp.kind,
+      sourcePlatform: sp.sourcePlatform,
+      sourceGroup: sp.sourceGroup,
+    })),
   }));
 
-  return NextResponse.json({ posts: enriched, sort, topic });
+  const groups = Array.from(
+    new Set(s.posts.map((p) => p.sourceGroup).filter(Boolean) as string[])
+  );
+
+  return NextResponse.json({ posts: enriched, sort, topic, group, groups });
 }
 
 function score(p: Post) {
@@ -65,6 +89,9 @@ export async function POST(req: Request) {
     bookmarkedBy: [],
     likedBy: [],
     voters: {},
+    sourcePlatform: "community",
+    sourceGroup: "Community",
+    clusterId: `community:${(body.topicIds?.[0] as string) || "t3"}`,
   };
 
   mutate((st) => {

@@ -41,7 +41,9 @@ export default function NotificationsPage() {
       <section className="flex items-end justify-between gap-3">
         <div>
           <h1 className="page-title">Notifications</h1>
-          <p className="page-sub">Friend requests, follows, comments, and chat pings.</p>
+          <p className="page-sub">
+            Friend requests, message requests, incoming messages, follows, and comments.
+          </p>
         </div>
         <button type="button" className="btn-secondary text-sm" onClick={markAll}>
           Mark all read

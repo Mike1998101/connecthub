@@ -39,6 +39,15 @@ export default function FriendsPage() {
     load();
   }
 
+  async function reject(id: string) {
+    await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reject_friend", friendshipId: id }),
+    });
+    load();
+  }
+
   async function social(userId: string, action: "follow" | "friend") {
     await fetch("/api/users", {
       method: "POST",
@@ -52,7 +61,9 @@ export default function FriendsPage() {
     <div className="space-y-4 px-4 sm:px-0">
       <section>
         <h1 className="page-title">Friends</h1>
-        <p className="page-sub">Accepted friends and incoming requests.</p>
+        <p className="page-sub">
+          Friendships require an invite and approval before you become friends.
+        </p>
       </section>
 
       {pending.length ? (
@@ -75,6 +86,13 @@ export default function FriendsPage() {
                   onClick={() => accept(p.friendship.id)}
                 >
                   Accept
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary shrink-0 text-sm"
+                  onClick={() => reject(p.friendship.id)}
+                >
+                  Decline
                 </button>
               </div>
             ) : null

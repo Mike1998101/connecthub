@@ -1,155 +1,83 @@
-import { curatedArtists, curatedShortIds, getState, mutate, stripExternalUrls, uid } from "./store";
+import { curatedArtists, getState, mutate, stripExternalUrls, uid, SERVICE_USER_ID } from "./store";
+import { clusterIdFor } from "./similarity";
+import { syncAllYoutubeChannels, runDailyIngest } from "./scrapers";
 import type { Post } from "./types";
 
 export type YoutubeSyncResult = {
   imported: number;
   posts: Post[];
-  source: "youtube-api" | "curated";
+  source: "youtube-rss" | "curated-fallback";
+  channels: string[];
   detailsFetched: string[];
   detailsPending: string[];
 };
 
 /**
- * Ingest Shorts-style videos into public posts.
- * Uses YouTube Data API when YOUTUBE_API_KEY is set; otherwise curated catalog.
- * Never stores public outbound links — only video ids for in-app embed.
+ * Admin ingest: YouTube channel recent uploads via public RSS (no API key).
+ * Posts are created as public service-role records. Duplicates skipped by video id.
  */
 export async function syncYoutubeShorts(limit = 5): Promise<YoutubeSyncResult> {
-  const key = process.env.YOUTUBE_API_KEY;
   const detailsFetched = [
     "title",
     "description",
-    "channelTitle",
+    "channelId",
     "publishedAt",
-    "thumbnails",
-    "duration",
-    "viewCount",
-    "likeCount",
-    "tags",
+    "thumbnail",
+    "videoId",
+    "orientationGuess",
+    "discussionPrompt",
   ];
   const detailsPending = [
     "captionTracks",
+    "exactDuration",
+    "viewCount",
+    "likeCount",
     "chapters",
-    "relatedInAppTopics",
-    "moderationScore",
-    "artistFingerprint",
+    "topicClassifierV2",
   ];
 
-  if (key) {
-    try {
-      const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
-      searchUrl.searchParams.set("part", "snippet");
-      searchUrl.searchParams.set("type", "video");
-      searchUrl.searchParams.set("videoDuration", "short");
-      searchUrl.searchParams.set("order", "viewCount");
-      searchUrl.searchParams.set("maxResults", String(limit));
-      searchUrl.searchParams.set("q", "shorts music");
-      searchUrl.searchParams.set("key", key);
+  const results = await syncAllYoutubeChannels(limit);
+  const posts = results.flatMap((r) => r.posts);
+  const imported = results.reduce((n, r) => n + r.imported, 0);
+  const channels = getState().settings.youtubeChannelIds;
 
-      const searchRes = await fetch(searchUrl.toString());
-      if (!searchRes.ok) throw new Error(`YouTube search ${searchRes.status}`);
-      const searchJson = (await searchRes.json()) as {
-        items?: Array<{ id: { videoId: string }; snippet: Record<string, string> }>;
-      };
-      const ids = (searchJson.items ?? []).map((i) => i.id.videoId).filter(Boolean);
-      if (ids.length === 0) throw new Error("No videos");
-
-      const videosUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
-      videosUrl.searchParams.set("part", "snippet,contentDetails,statistics");
-      videosUrl.searchParams.set("id", ids.join(","));
-      videosUrl.searchParams.set("key", key);
-      const videosRes = await fetch(videosUrl.toString());
-      const videosJson = (await videosRes.json()) as {
-        items?: Array<{
-          id: string;
-          snippet: {
-            title: string;
-            description: string;
-            channelTitle: string;
-            publishedAt: string;
-            tags?: string[];
-            thumbnails?: { high?: { url: string } };
-          };
-          contentDetails?: { duration?: string };
-          statistics?: { viewCount?: string; likeCount?: string };
-        }>;
-      };
-
-      const created: Post[] = [];
-      mutate((s) => {
-        for (const item of videosJson.items ?? []) {
-          const existing = s.posts.find((p) => p.media?.youtubeVideoId === item.id);
-          if (existing) continue;
-          const post: Post = {
-            id: uid("ps"),
-            authorId: "u1",
-            kind: "short",
-            title: item.snippet.title,
-            body: stripExternalUrls(
-              `${item.snippet.description || item.snippet.title}\n\nChannel: ${item.snippet.channelTitle}`
-            ),
-            topicIds: ["t2"],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            upvotes: 0,
-            downvotes: 0,
-            likes: 0,
-            commentCount: 0,
-            media: {
-              title: item.snippet.title,
-              description: stripExternalUrls(item.snippet.description || ""),
-              channelTitle: item.snippet.channelTitle,
-              youtubeVideoId: item.id,
-              publishedAt: item.snippet.publishedAt,
-              tags: item.snippet.tags ?? ["shorts"],
-              thumbnailUrl: item.snippet.thumbnails?.high?.url,
-              viewCount: Number(item.statistics?.viewCount ?? 0),
-              likeCount: Number(item.statistics?.likeCount ?? 0),
-              durationSec: parseIsoDuration(item.contentDetails?.duration),
-              width: 1080,
-              height: 1920,
-            },
-            sourceHidden: true,
-            bookmarkedBy: [],
-            likedBy: [],
-            voters: {},
-          };
-          s.posts.unshift(post);
-          created.push(post);
-        }
-      });
-
-      return {
-        imported: created.length,
-        posts: created,
-        source: "youtube-api",
-        detailsFetched,
-        detailsPending,
-      };
-    } catch {
-      // fall through to curated
-    }
+  if (imported > 0) {
+    return {
+      imported,
+      posts,
+      source: "youtube-rss",
+      channels,
+      detailsFetched,
+      detailsPending,
+    };
   }
 
   const created: Post[] = [];
   mutate((s) => {
-    for (const item of curatedShortIds.slice(0, limit)) {
-      const existing = s.posts.find((p) => p.media?.youtubeVideoId === item.id);
-      if (existing) continue;
+    for (const item of [
+      {
+        id: "aqz-KE-bpKQ",
+        title: "Big Buck Bunny moments",
+        channel: "Blender Foundation",
+        tags: ["shorts", "animation"],
+      },
+    ]) {
+      const fp = `yt:${item.id}`;
+      if (s.posts.some((p) => p.fingerprint === fp)) continue;
       const post: Post = {
         id: uid("ps"),
-        authorId: "u1",
+        authorId: SERVICE_USER_ID,
         kind: "short",
         title: item.title,
         body: stripExternalUrls(
-          `${item.title} from ${item.channel}. Enriched for ConnectHub feed — engage in comments without leaving.`
+          `${item.title} from ${item.channel}. Enriched for ConnectHub — engage in comments without leaving.`
         ),
         topicIds: ["t2"],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        upvotes: Math.floor(Math.random() * 80),
+        upvotes: 12,
         downvotes: 0,
-        likes: Math.floor(Math.random() * 50),
+        likes: 8,
         commentCount: 0,
         media: {
           title: item.title,
@@ -161,11 +89,16 @@ export async function syncYoutubeShorts(limit = 5): Promise<YoutubeSyncResult> {
           publishedAt: new Date().toISOString(),
           width: 1080,
           height: 1920,
+          orientation: "portrait",
         },
         sourceHidden: true,
         bookmarkedBy: [],
         likedBy: [],
         voters: {},
+        fingerprint: fp,
+        sourcePlatform: "youtube",
+        sourceGroup: "YouTube Channels",
+        clusterId: clusterIdFor("youtube", item.tags, ["t2"]),
       };
       s.posts.unshift(post);
       created.push(post);
@@ -175,7 +108,8 @@ export async function syncYoutubeShorts(limit = 5): Promise<YoutubeSyncResult> {
   return {
     imported: created.length,
     posts: created,
-    source: "curated",
+    source: "curated-fallback",
+    channels,
     detailsFetched,
     detailsPending,
   };
@@ -185,10 +119,10 @@ export function syncMusicFeed(): { imported: number; posts: Post[] } {
   const created: Post[] = [];
   mutate((s) => {
     for (const a of curatedArtists) {
-      const exists = s.posts.some(
-        (p) => p.kind === "music" && p.media?.youtubeVideoId === a.youtubeVideoId
-      );
+      const fp = `yt:${a.youtubeVideoId}`;
+      const exists = s.posts.some((p) => p.fingerprint === fp && p.kind === "music");
       if (exists) continue;
+      const tags = ["music", a.genre.toLowerCase()];
       const post: Post = {
         id: uid("pm"),
         authorId: "u3",
@@ -209,14 +143,21 @@ export function syncMusicFeed(): { imported: number; posts: Post[] } {
           genre: a.genre,
           description: a.description,
           youtubeVideoId: a.youtubeVideoId,
-          tags: ["music", a.genre.toLowerCase()],
+          tags,
           thumbnailUrl: `https://i.ytimg.com/vi/${a.youtubeVideoId}/hqdefault.jpg`,
           channelTitle: a.artist,
+          width: 1920,
+          height: 1080,
+          orientation: "landscape",
         },
         sourceHidden: true,
         bookmarkedBy: [],
         likedBy: [],
         voters: {},
+        fingerprint: fp,
+        sourcePlatform: "music",
+        sourceGroup: "Music Artists",
+        clusterId: clusterIdFor("music", tags, ["t1"]),
       };
       s.posts.unshift(post);
       created.push(post);
@@ -225,17 +166,9 @@ export function syncMusicFeed(): { imported: number; posts: Post[] } {
   return { imported: created.length, posts: created };
 }
 
-function parseIsoDuration(iso?: string): number | undefined {
-  if (!iso) return undefined;
-  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (!m) return undefined;
-  return Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0);
-}
-
 export function listMusicCatalog() {
   return curatedArtists.map((a) => ({
     ...a,
-    // Explicitly no public URL fields
     playableInApp: true,
     detailsFetched: ["artist", "track", "album", "genre", "description", "thumbnail"],
     detailsToFetch: ["lyricsSnippet", "similarArtists", "releaseCredits", "tempoBpm"],
@@ -244,10 +177,18 @@ export function listMusicCatalog() {
 
 export function publicFeedStats() {
   const s = getState();
+  const groups = Array.from(
+    new Set(s.posts.map((p) => p.sourceGroup).filter(Boolean) as string[])
+  );
   return {
     posts: s.posts.length,
     shorts: s.posts.filter((p) => p.kind === "short").length,
     music: s.posts.filter((p) => p.kind === "music").length,
+    articles: s.posts.filter((p) => p.kind === "article" || p.kind === "news").length,
     topics: s.topics.length,
+    groups,
+    visibility: s.settings.visibility,
   };
 }
+
+export { runDailyIngest };

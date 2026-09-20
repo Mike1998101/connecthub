@@ -1,8 +1,8 @@
 # ConnectHub
 
-Public community board for text, full-bleed images/video, YouTube Shorts (in-app), and music feeds — Friendly Cards UI with nested comments, votes, likes, friends, chat, and bookmarks.
+Public community board for shorts, music, curated tech, and nested discussion — Friendly Cards UI, in-app media (no outbound YouTube hops).
 
-## Quick start
+## Run
 
 ```bash
 npm install
@@ -11,37 +11,19 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Demo login usernames: `you`, `maya_waves`, `nova_beats`, `jordan_ink`.
+## What you get
 
-## Optional live YouTube ingest
+- **Public feed** (visibility default: public) — chronological / trending / topic / source-group filters
+- **YouTube channel RSS ingest** (no API key) — admin-only; posts as `ConnectHub Curator` service account; duplicates skipped
+- **Daily multi-source curation** — TechCrunch, The Verge, Wired, Gizmodo, Dev.to, Hacker News API, Reddit hot JSON, GitHub trending, music catalog
+- **Schedule** — `/settings` sets `dailyIngestHour` (0–23) and app visibility
+- **Similar posts** — cluster/topic/tag matching when you open a card
+- **Social** — follow, friend request → approve/decline, message requests, group chat add/remove members
+- **Profile** — posts, comments, following tabs; public profiles support follow + add friend
 
-Set an API key so `POST /api/youtube/sync` pulls real Shorts metadata:
+## Admin actions
 
-```env
-YOUTUBE_API_KEY=your_key_here
-```
+- Sidebar **Run daily curation** or `POST /api/settings` `{ "action": "run_now" }`
+- `POST /api/youtube/sync` `{ "mode": "daily" }` (admin session required)
 
-Without a key, curated Shorts + known-artist music posts are used. External URLs are stripped from post bodies; players use `youtube-nocookie` embeds with modest branding and CSS masks so users stay on ConnectHub.
-
-## Pages
-
-| Route | Purpose |
-|-------|---------|
-| `/` | Feed (chronological / trending / topic) |
-| `/profile` | Your posts + account settings |
-| `/topics` | Topic explorer |
-| `/analytics` | Weekly trending reports |
-| `/bookmarks` | Saved posts |
-| `/guidelines` | Community rules |
-| `/top-creators` | Popular creators |
-| `/friends` `/suggestions` `/following` | Social graph |
-| `/login` | Demo auth |
-| `/chat` | Peer + group chat |
-| `/notifications` | Alerts |
-| `/users/[id]` | Public profiles (private profiles locked) |
-
-## Retention design
-
-- No outbound YouTube/link CTAs in the UI
-- Media is full-width on phones
-- Rich details panels (artist, album, views, tags, etc.) plus fields queued for future fetch
+Logged-in demo user is **You** (`u5`, admin).

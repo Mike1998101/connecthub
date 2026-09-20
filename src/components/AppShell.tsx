@@ -20,6 +20,7 @@ const socialNav = [
   { href: "/notifications", label: "Alerts" },
   { href: "/bookmarks", label: "Saved" },
   { href: "/profile", label: "Profile" },
+  { href: "/settings", label: "Settings" },
   { href: "/login", label: "Login" },
 ];
 
@@ -108,12 +109,19 @@ export function AppShell({ children }: { children: ReactNode }) {
                 fetch("/api/youtube/sync", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ limit: 5 }),
-                }).then(() => window.location.reload())
+                  body: JSON.stringify({ mode: "daily", limit: 5 }),
+                }).then(async (r) => {
+                  const d = await r.json();
+                  if (!r.ok) alert(d.error || "Admin only");
+                  else window.location.reload();
+                })
               }
             >
-              Sync Shorts + Music
+              Run daily curation
             </button>
+            <Link href="/settings" className="btn-ghost mt-1 block w-full text-center text-sm">
+              Schedule & visibility
+            </Link>
           </div>
         </aside>
         <main className="min-w-0 pb-16">{children}</main>

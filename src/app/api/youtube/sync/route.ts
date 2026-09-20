@@ -1,24 +1,53 @@
 import { NextResponse } from "next/server";
-import { syncMusicFeed, syncYoutubeShorts, listMusicCatalog } from "@/lib/youtube";
+import { syncMusicFeed, syncYoutubeShorts, listMusicCatalog, runDailyIngest } from "@/lib/youtube";
+import { ensureDailyCron } from "@/lib/cron";
+import { getState, isAdmin } from "@/lib/store";
+
+ensureDailyCron();
 
 export async function POST(req: Request) {
+  const s = getState();
+  const me = s.currentUserId;
+  if (!isAdmin(me)) {
+    return NextResponse.json(
+      { error: "Admin only — YouTube RSS ingest publishes as the public service account" },
+      { status: 403 }
+    );
+  }
+
   const body = await req.json().catch(() => ({}));
+  const mode = body.mode || "youtube";
   const limit = Number(body.limit || 5);
+
+  if (mode === "daily" || mode === "all") {
+    const music = syncMusicFeed();
+    const ingest = await runDailyIngest({ youtubeLimit: limit, rssLimit: limit });
+    return NextResponse.json({
+      ingest,
+      music,
+      message: `Daily curation ran — imported ${ingest.totalImported} items across ${ingest.groups.length} groups`,
+      groups: ingest.groups,
+    });
+  }
+
   const shorts = await syncYoutubeShorts(limit);
-  const music = syncMusicFeed();
+  const music = body.includeMusic === false ? { imported: 0, posts: [] } : syncMusicFeed();
   return NextResponse.json({
     shorts,
     music,
     message:
-      shorts.source === "youtube-api"
-        ? "Live YouTube Shorts imported into public feed"
-        : "Curated Shorts + music feed refreshed (set YOUTUBE_API_KEY for live ingest)",
+      shorts.source === "youtube-rss"
+        ? "YouTube channel RSS uploads published as public service posts (duplicates skipped)"
+        : "RSS unavailable — curated fallback used. Still no outbound YouTube links.",
   });
 }
 
 export async function GET() {
+  ensureDailyCron();
+  const s = getState();
   return NextResponse.json({
     musicCatalog: listMusicCatalog(),
-    hint: "POST /api/youtube/sync to ingest shorts into the public feed",
+    settings: s.settings,
+    hint: "POST as admin with { mode: 'daily' } for full multi-source ingest, or default YouTube RSS + music",
   });
 }

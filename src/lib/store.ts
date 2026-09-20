@@ -1,4 +1,5 @@
 import type {
+  AppSettings,
   AppState,
   Comment,
   Post,
@@ -10,12 +11,35 @@ import type {
   ChatMessage,
   NotificationItem,
 } from "./types";
+import { clusterIdFor } from "./similarity";
+import { DEFAULT_YT_CHANNELS } from "./channels";
 
 const now = Date.now();
 const hoursAgo = (h: number) => new Date(now - h * 3600_000).toISOString();
 const daysAgo = (d: number) => new Date(now - d * 86400_000).toISOString();
 
+export const SERVICE_USER_ID = "u_service";
+export const ADMIN_USER_ID = "u5";
+
 export const seedUsers: User[] = [
+  {
+    id: SERVICE_USER_ID,
+    username: "connecthub_curator",
+    displayName: "ConnectHub Curator",
+    bio: "Public service account that publishes daily curated shorts, music, and news for everyone.",
+    avatarUrl: "https://api.dicebear.com/9.x/avataaars/svg?seed=Curator",
+    profilePublic: true,
+    joinedAt: daysAgo(500),
+    location: "Everywhere",
+    interests: ["curation", "tech", "music", "shorts"],
+    followersCount: 50000,
+    followingCount: 0,
+    friendsCount: 0,
+    postsCount: 0,
+    rating: 5,
+    isService: true,
+    isAdmin: true,
+  },
   {
     id: "u1",
     username: "maya_waves",
@@ -89,12 +113,13 @@ export const seedUsers: User[] = [
     profilePublic: true,
     joinedAt: daysAgo(2),
     location: "Anywhere",
-    interests: ["community", "music", "shorts"],
+    interests: ["community", "music", "shorts", "tech"],
     followersCount: 12,
     followingCount: 8,
     friendsCount: 3,
     postsCount: 2,
     rating: 4.0,
+    isAdmin: true,
   },
 ];
 
@@ -143,19 +168,37 @@ export const seedTopics: Topic[] = [
     id: "t6",
     slug: "tech",
     name: "Tech",
-    description: "Tools, tips, and demos without link sprawl.",
+    description: "Daily curated tech from HN, TechCrunch, Verge, GitHub, and more.",
     postCount: 24,
     color: "#4A90A4",
   },
 ];
 
-/** Popular short-form video ids used when live YouTube API key is absent */
 export const curatedShortIds = [
-  { id: "aqz-KE-bpKQ", title: "Big Buck Bunny moments", channel: "Blender Foundation", tags: ["shorts", "animation"] },
-  { id: "LXb3EKWsInQ", title: "Coastal calm reel", channel: "Nature Desk", tags: ["shorts", "travel"] },
-  { id: "ScMzIvxBSi4", title: "Studio session snippet", channel: "Studio Loop", tags: ["shorts", "music"] },
-  { id: "dQw4w9WgXcQ", title: "Classic stage energy", channel: "Archive Live", tags: ["shorts", "music"] },
-  { id: "jNQXAC9IVRw", title: "First camera laughs", channel: "Museum Clips", tags: ["shorts", "community"] },
+  {
+    id: "aqz-KE-bpKQ",
+    title: "Big Buck Bunny moments",
+    channel: "Blender Foundation",
+    tags: ["shorts", "animation"],
+  },
+  {
+    id: "LXb3EKWsInQ",
+    title: "Coastal calm reel",
+    channel: "Nature Desk",
+    tags: ["shorts", "travel"],
+  },
+  {
+    id: "ScMzIvxBSi4",
+    title: "Studio session snippet",
+    channel: "Studio Loop",
+    tags: ["shorts", "music"],
+  },
+  {
+    id: "jNQXAC9IVRw",
+    title: "First camera laughs",
+    channel: "Museum Clips",
+    tags: ["shorts", "community"],
+  },
 ];
 
 export const curatedArtists = [
@@ -206,73 +249,339 @@ export const curatedArtists = [
   },
 ];
 
-export function buildSeedPosts(): Post[] {
-  const shorts = curatedShortIds.map((s, i) => ({
-    id: `ps${i + 1}`,
-    authorId: i % 2 === 0 ? "u1" : "u3",
-    kind: "short" as const,
-    title: s.title,
-    body: `${s.title} — full description pulled for in-app viewing. Channel: ${s.channel}. Tags: ${s.tags.join(", ")}. Stay and chat; outbound platform marks are hidden.`,
-    topicIds: ["t2", s.tags.includes("music") ? "t1" : "t3"],
-    createdAt: hoursAgo(2 + i * 5),
-    updatedAt: hoursAgo(2 + i * 5),
-    upvotes: 120 + i * 37,
-    downvotes: 2 + (i % 3),
-    likes: 80 + i * 21,
-    commentCount: 4 + i,
-    media: {
-      title: s.title,
-      description: `Auto-ingested short with enriched metadata: channel “${s.channel}”, tags [${s.tags.join(", ")}], vertical framing optimized for full-bleed mobile width.`,
-      channelTitle: s.channel,
-      youtubeVideoId: s.id,
-      durationSec: 45 + i * 8,
-      publishedAt: daysAgo(1 + i),
-      viewCount: 50000 + i * 12000,
-      likeCount: 3200 + i * 400,
-      tags: s.tags,
-      thumbnailUrl: `https://i.ytimg.com/vi/${s.id}/hqdefault.jpg`,
-      width: 1080,
-      height: 1920,
-    },
-    sourceHidden: true,
-    bookmarkedBy: i === 0 ? ["u5"] : [],
-    likedBy: ["u5"],
-    voters: { u5: 1 as const },
-  }));
+const defaultSettings: AppSettings = {
+  visibility: "public",
+  dailyIngestHour: 8,
+  lastIngestAt: null,
+  ingestEnabled: true,
+  youtubeChannelIds: DEFAULT_YT_CHANNELS.map((c) => c.id),
+  enabledSources: [
+    "youtube",
+    "techcrunch",
+    "theverge",
+    "wired",
+    "gizmodo",
+    "hackernews",
+    "reddit",
+    "github",
+    "devto",
+    "music",
+  ],
+};
 
-  const music = curatedArtists.map((a, i) => ({
-    id: `pm${i + 1}`,
-    authorId: "u3",
-    kind: "music" as const,
-    title: `${a.artist} — ${a.track}`,
-    body: a.description,
-    topicIds: ["t1"],
-    createdAt: hoursAgo(1 + i * 3),
-    updatedAt: hoursAgo(1 + i * 3),
-    upvotes: 200 + i * 55,
-    downvotes: 1,
-    likes: 150 + i * 40,
-    commentCount: 6 + i,
-    media: {
-      title: a.track,
-      artist: a.artist,
-      album: a.album,
-      genre: a.genre,
-      description: a.description,
-      youtubeVideoId: a.youtubeVideoId,
-      durationSec: 180 + i * 12,
-      tags: ["music", a.genre.toLowerCase(), a.artist.toLowerCase().replace(/\s+/g, "-")],
-      thumbnailUrl: `https://i.ytimg.com/vi/${a.youtubeVideoId}/hqdefault.jpg`,
-      channelTitle: a.artist,
-      publishedAt: daysAgo(30 + i * 10),
-      viewCount: 1_000_000 + i * 250_000,
-      likeCount: 40_000 + i * 5_000,
+export function buildSeedPosts(): Post[] {
+  const shorts = curatedShortIds.map((s, i) => {
+    const tags = s.tags;
+    return {
+      id: `ps${i + 1}`,
+      authorId: SERVICE_USER_ID,
+      kind: "short" as const,
+      title: s.title,
+      body: `${s.title} — full description for in-app viewing. Channel: ${s.channel}. Tags: ${tags.join(", ")}. What moment should we talk about in comments?`,
+      topicIds: ["t2", tags.includes("music") ? "t1" : "t3"],
+      createdAt: hoursAgo(2 + i * 5),
+      updatedAt: hoursAgo(2 + i * 5),
+      upvotes: 120 + i * 37,
+      downvotes: 2 + (i % 3),
+      likes: 80 + i * 21,
+      commentCount: 4 + i,
+      media: {
+        title: s.title,
+        description: `Auto-ingested short with enriched metadata: channel “${s.channel}”, tags [${tags.join(", ")}], portrait framing for full-bleed mobile width.`,
+        channelTitle: s.channel,
+        youtubeVideoId: s.id,
+        durationSec: 45 + i * 8,
+        publishedAt: daysAgo(1 + i),
+        viewCount: 50000 + i * 12000,
+        likeCount: 3200 + i * 400,
+        tags,
+        thumbnailUrl: `https://i.ytimg.com/vi/${s.id}/hqdefault.jpg`,
+        width: 1080,
+        height: 1920,
+        orientation: "portrait" as const,
+      },
+      sourceHidden: true,
+      bookmarkedBy: i === 0 ? ["u5"] : [],
+      likedBy: ["u5"],
+      voters: { u5: 1 as const },
+      fingerprint: `yt:${s.id}`,
+      sourcePlatform: "youtube" as const,
+      sourceGroup: "YouTube Channels",
+      clusterId: clusterIdFor("youtube", tags, ["t2"]),
+    };
+  });
+
+  const music = curatedArtists.map((a, i) => {
+    const tags = ["music", a.genre.toLowerCase(), a.artist.toLowerCase().replace(/\s+/g, "-")];
+    return {
+      id: `pm${i + 1}`,
+      authorId: "u3",
+      kind: "music" as const,
+      title: `${a.artist} — ${a.track}`,
+      body: a.description,
+      topicIds: ["t1"],
+      createdAt: hoursAgo(1 + i * 3),
+      updatedAt: hoursAgo(1 + i * 3),
+      upvotes: 200 + i * 55,
+      downvotes: 1,
+      likes: 150 + i * 40,
+      commentCount: 6 + i,
+      media: {
+        title: a.track,
+        artist: a.artist,
+        album: a.album,
+        genre: a.genre,
+        description: a.description,
+        youtubeVideoId: a.youtubeVideoId,
+        durationSec: 180 + i * 12,
+        tags,
+        thumbnailUrl: `https://i.ytimg.com/vi/${a.youtubeVideoId}/hqdefault.jpg`,
+        channelTitle: a.artist,
+        publishedAt: daysAgo(30 + i * 10),
+        viewCount: 1_000_000 + i * 250_000,
+        likeCount: 40_000 + i * 5_000,
+        width: 1920,
+        height: 1080,
+        orientation: "landscape" as const,
+      },
+      sourceHidden: true,
+      bookmarkedBy: i < 2 ? ["u5"] : [],
+      likedBy: i % 2 === 0 ? ["u5"] : [],
+      voters: {},
+      fingerprint: `yt:${a.youtubeVideoId}`,
+      sourcePlatform: "music" as const,
+      sourceGroup: "Music Artists",
+      clusterId: clusterIdFor("music", tags, ["t1"]),
+    };
+  });
+
+  const curatedNews: Post[] = [
+    {
+      id: "pn_tc1",
+      authorId: SERVICE_USER_ID,
+      kind: "article",
+      title: "AI startup raises Series B to automate research desks",
+      body: "TechCrunch-style digest: funding, product angle, and what it means for builders. Discussion: which workflow would you automate first? External links removed.",
+      topicIds: ["t6"],
+      createdAt: hoursAgo(3),
+      updatedAt: hoursAgo(3),
+      upvotes: 142,
+      downvotes: 4,
+      likes: 88,
+      commentCount: 11,
+      imageUrls: [
+        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1600&q=80",
+      ],
+      media: {
+        title: "Series B research automation",
+        description:
+          "Seeded TechCrunch-group article with funding details, target buyers, and comment hooks for founders.",
+        channelTitle: "techcrunch",
+        tags: ["tech", "startups", "funding", "ai"],
+        orientation: "landscape",
+        width: 1600,
+        height: 900,
+        publishedAt: hoursAgo(4),
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: [],
+      voters: {},
+      fingerprint: "seed:techcrunch:series-b",
+      sourcePlatform: "techcrunch",
+      sourceGroup: "Tech & Business Media",
+      clusterId: clusterIdFor("techcrunch", ["startups", "ai"], ["t6"]),
     },
-    sourceHidden: true,
-    bookmarkedBy: i < 2 ? ["u5"] : [],
-    likedBy: i % 2 === 0 ? ["u5"] : [],
-    voters: {},
-  }));
+    {
+      id: "pn_verge1",
+      authorId: SERVICE_USER_ID,
+      kind: "news",
+      title: "The Verge: Foldables get a practical software rethink",
+      body: "Consumer electronics roundup with UX notes for dual screens. Prompt: would you daily-drive a foldable for ConnectHub short creation?",
+      topicIds: ["t6"],
+      createdAt: hoursAgo(5),
+      updatedAt: hoursAgo(5),
+      upvotes: 97,
+      downvotes: 2,
+      likes: 61,
+      commentCount: 7,
+      imageUrls: [
+        "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=1600&q=80",
+      ],
+      media: {
+        title: "Foldables software rethink",
+        description: "Product launch coverage clustered under Tech & Business Media.",
+        channelTitle: "theverge",
+        tags: ["tech", "gadgets", "mobile"],
+        orientation: "landscape",
+        width: 1600,
+        height: 1000,
+      },
+      sourceHidden: true,
+      bookmarkedBy: ["u5"],
+      likedBy: [],
+      voters: {},
+      fingerprint: "seed:verge:foldables",
+      sourcePlatform: "theverge",
+      sourceGroup: "Tech & Business Media",
+      clusterId: clusterIdFor("theverge", ["gadgets"], ["t6"]),
+    },
+    {
+      id: "pn_hn1",
+      authorId: SERVICE_USER_ID,
+      kind: "news",
+      title: "Show HN: Local-first sync engine for community apps",
+      body: "Hacker News digest: offline-first CRDTs for feeds and comments. Prompt: would ConnectHub benefit from local-first drafts?",
+      topicIds: ["t6"],
+      createdAt: hoursAgo(7),
+      updatedAt: hoursAgo(7),
+      upvotes: 310,
+      downvotes: 6,
+      likes: 120,
+      commentCount: 44,
+      media: {
+        title: "Local-first sync",
+        description: "Developer-heavy HN thread summary — Social News Aggregators group.",
+        channelTitle: "HN",
+        tags: ["hackernews", "startups", "developers"],
+        viewCount: 310,
+        likeCount: 44,
+        orientation: "landscape",
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: ["u5"],
+      voters: { u5: 1 },
+      fingerprint: "seed:hn:local-first",
+      sourcePlatform: "hackernews",
+      sourceGroup: "Social News Aggregators",
+      clusterId: clusterIdFor("hackernews", ["developers"], ["t6"]),
+    },
+    {
+      id: "pn_reddit1",
+      authorId: SERVICE_USER_ID,
+      kind: "news",
+      title: "r/technology: Chip shortage ripple into indie hardware",
+      body: "Hot Reddit thread summary (score threshold met). Prompt: how should community makers plan inventory this quarter?",
+      topicIds: ["t6"],
+      createdAt: hoursAgo(9),
+      updatedAt: hoursAgo(9),
+      upvotes: 420,
+      downvotes: 18,
+      likes: 95,
+      commentCount: 130,
+      media: {
+        title: "Chip shortage ripple",
+        description: "Reddit aggregator group — high-engagement discussion bait.",
+        channelTitle: "r/technology",
+        tags: ["reddit", "technology", "hardware"],
+        viewCount: 420,
+        likeCount: 130,
+        orientation: "landscape",
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: [],
+      voters: {},
+      fingerprint: "seed:reddit:chips",
+      sourcePlatform: "reddit",
+      sourceGroup: "Social News Aggregators",
+      clusterId: clusterIdFor("reddit", ["hardware"], ["t6"]),
+    },
+    {
+      id: "pn_gh1",
+      authorId: SERVICE_USER_ID,
+      kind: "article",
+      title: "Trending: openai/whisper",
+      body: "GitHub Trending digest — speech recognition framework exploding in stars. Prompt: where would you embed Whisper inside ConnectHub?",
+      topicIds: ["t6"],
+      createdAt: hoursAgo(11),
+      updatedAt: hoursAgo(11),
+      upvotes: 188,
+      downvotes: 1,
+      likes: 76,
+      commentCount: 19,
+      media: {
+        title: "openai/whisper",
+        description: "Developer Hubs group — OSS momentum for AI audio.",
+        channelTitle: "GitHub Trending",
+        tags: ["github", "opensource", "python", "ai"],
+        likeCount: 78000,
+        orientation: "landscape",
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: [],
+      voters: {},
+      fingerprint: "github:openai/whisper",
+      sourcePlatform: "github",
+      sourceGroup: "Developer Hubs",
+      clusterId: clusterIdFor("github", ["ai", "python"], ["t6"]),
+    },
+    {
+      id: "pn_wired1",
+      authorId: SERVICE_USER_ID,
+      kind: "article",
+      title: "Wired: The quiet ethics of recommendation loops",
+      body: "Long-form feature digest on engagement systems. Prompt: how should ConnectHub’s similar-post suggestions stay healthy?",
+      topicIds: ["t6", "t3"],
+      createdAt: hoursAgo(14),
+      updatedAt: hoursAgo(14),
+      upvotes: 76,
+      downvotes: 3,
+      likes: 54,
+      commentCount: 9,
+      imageUrls: [
+        "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&w=1600&q=80",
+      ],
+      media: {
+        title: "Recommendation ethics",
+        description: "Wired cluster under Tech & Business Media.",
+        channelTitle: "wired",
+        tags: ["tech", "features", "ethics"],
+        orientation: "landscape",
+        width: 1600,
+        height: 1000,
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: [],
+      voters: {},
+      fingerprint: "seed:wired:recs",
+      sourcePlatform: "wired",
+      sourceGroup: "Tech & Business Media",
+      clusterId: clusterIdFor("wired", ["ethics"], ["t6"]),
+    },
+    {
+      id: "pn_devto1",
+      authorId: SERVICE_USER_ID,
+      kind: "article",
+      title: "Dev.to: Building nested comments that feel human",
+      body: "Engineering tutorial digest on threaded UX. Prompt: what nesting depth feels right on mobile?",
+      topicIds: ["t6", "t3"],
+      createdAt: hoursAgo(16),
+      updatedAt: hoursAgo(16),
+      upvotes: 64,
+      downvotes: 0,
+      likes: 41,
+      commentCount: 12,
+      media: {
+        title: "Nested comments UX",
+        description: "Developer Hubs — practical webdev write-up.",
+        channelTitle: "devto",
+        tags: ["webdev", "tutorials", "engineering"],
+        orientation: "landscape",
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: [],
+      voters: {},
+      fingerprint: "seed:devto:comments",
+      sourcePlatform: "devto",
+      sourceGroup: "Developer Hubs",
+      clusterId: clusterIdFor("devto", ["webdev"], ["t6"]),
+    },
+  ];
 
   const community: Post[] = [
     {
@@ -280,7 +589,7 @@ export function buildSeedPosts(): Post[] {
       authorId: "u2",
       kind: "image",
       title: "Warm board sketch of the week",
-      body: "Soft pencil pass of our Friendly Cards layout moodboard. Drop nested feedback below — keep everything here so newcomers can follow along.",
+      body: "Soft pencil pass of our Friendly Cards layout moodboard. Drop nested feedback below.",
       topicIds: ["t3", "t4"],
       createdAt: hoursAgo(6),
       updatedAt: hoursAgo(6),
@@ -297,11 +606,15 @@ export function buildSeedPosts(): Post[] {
         width: 1600,
         height: 1000,
         tags: ["community", "design"],
+        orientation: "landscape",
       },
       sourceHidden: true,
       bookmarkedBy: [],
       likedBy: [],
       voters: {},
+      sourcePlatform: "community",
+      sourceGroup: "Community",
+      clusterId: clusterIdFor("community", ["design"], ["t3"]),
     },
     {
       id: "pc2",
@@ -320,10 +633,45 @@ export function buildSeedPosts(): Post[] {
       bookmarkedBy: [],
       likedBy: [],
       voters: {},
+      sourcePlatform: "community",
+      sourceGroup: "Community",
+      clusterId: clusterIdFor("community", ["intro"], ["t3"]),
+    },
+    {
+      id: "pc3",
+      authorId: "u1",
+      kind: "image",
+      title: "Portrait story frame",
+      body: "Testing portrait media detection — tall image should fill phone width end-to-end.",
+      topicIds: ["t2", "t4"],
+      createdAt: hoursAgo(4),
+      updatedAt: hoursAgo(4),
+      upvotes: 55,
+      downvotes: 1,
+      likes: 33,
+      commentCount: 1,
+      imageUrls: [
+        "https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?auto=format&fit=crop&w=900&q=80",
+      ],
+      media: {
+        title: "Portrait frame",
+        description: "Portrait orientation sample",
+        width: 900,
+        height: 1400,
+        orientation: "portrait",
+        tags: ["creators", "portrait"],
+      },
+      sourceHidden: true,
+      bookmarkedBy: [],
+      likedBy: [],
+      voters: {},
+      sourcePlatform: "community",
+      sourceGroup: "Community",
+      clusterId: clusterIdFor("community", ["portrait"], ["t2"]),
     },
   ];
 
-  return [...music, ...shorts, ...community];
+  return [...music, ...shorts, ...curatedNews, ...community];
 }
 
 export function buildSeedComments(): Comment[] {
@@ -368,6 +716,26 @@ export function buildSeedComments(): Comment[] {
       upvotes: 3,
       downvotes: 0,
     },
+    {
+      id: "c5",
+      postId: "pn_hn1",
+      authorId: "u5",
+      parentId: null,
+      body: "Local-first drafts would help me write offline on the train.",
+      createdAt: hoursAgo(2),
+      upvotes: 9,
+      downvotes: 0,
+    },
+    {
+      id: "c6",
+      postId: "pn_tc1",
+      authorId: "u1",
+      parentId: null,
+      body: "Curious how they handle citation quality in research automation.",
+      createdAt: hoursAgo(1.5),
+      upvotes: 4,
+      downvotes: 0,
+    },
   ];
 }
 
@@ -398,6 +766,7 @@ export function buildSeedSocial() {
   const follows: Follow[] = [
     { followerId: "u5", followingId: "u1", createdAt: daysAgo(1) },
     { followerId: "u5", followingId: "u3", createdAt: daysAgo(1) },
+    { followerId: "u5", followingId: SERVICE_USER_ID, createdAt: daysAgo(1) },
     { followerId: "u1", followingId: "u5", createdAt: hoursAgo(20) },
     { followerId: "u2", followingId: "u3", createdAt: daysAgo(3) },
   ];
@@ -409,6 +778,7 @@ export function buildSeedSocial() {
       memberIds: ["u5", "u1"],
       lastMessageAt: hoursAgo(1),
       lastPreview: "Want to co-host a listening room?",
+      status: "open",
     },
     {
       id: "ch2",
@@ -417,6 +787,17 @@ export function buildSeedSocial() {
       memberIds: ["u5", "u1", "u3", "u2"],
       lastMessageAt: hoursAgo(3),
       lastPreview: "Nova dropped three new artist cards",
+      status: "open",
+    },
+    {
+      id: "ch3",
+      type: "peer",
+      title: "Message request · Jordan Ink",
+      memberIds: ["u5", "u2"],
+      lastMessageAt: hoursAgo(2),
+      lastPreview: "Hey — loved your sketch post",
+      status: "request",
+      requestedBy: "u2",
     },
   ];
   const messages: ChatMessage[] = [
@@ -441,6 +822,13 @@ export function buildSeedSocial() {
       body: "Nova dropped three new artist cards",
       createdAt: hoursAgo(3),
     },
+    {
+      id: "m4",
+      threadId: "ch3",
+      senderId: "u2",
+      body: "Hey — loved your sketch post",
+      createdAt: hoursAgo(2),
+    },
   ];
   const notifications: NotificationItem[] = [
     {
@@ -448,7 +836,7 @@ export function buildSeedSocial() {
       userId: "u5",
       type: "friend_request",
       title: "Friend request",
-      body: "Jordan Ink wants to connect",
+      body: "Jordan Ink wants to connect — approve to become friends",
       href: "/friends",
       read: false,
       createdAt: hoursAgo(4),
@@ -473,6 +861,26 @@ export function buildSeedSocial() {
       read: true,
       createdAt: hoursAgo(20),
     },
+    {
+      id: "n4",
+      userId: "u5",
+      type: "message_request",
+      title: "Message request",
+      body: "Jordan Ink sent a message request",
+      href: "/chat?thread=ch3",
+      read: false,
+      createdAt: hoursAgo(2),
+    },
+    {
+      id: "n5",
+      userId: "u5",
+      type: "incoming_message",
+      title: "Incoming message",
+      body: "Maya: Want to co-host a listening room?",
+      href: "/chat?thread=ch1",
+      read: false,
+      createdAt: hoursAgo(1),
+    },
   ];
   return { friendships, follows, chats, messages, notifications };
 }
@@ -482,14 +890,18 @@ let state: AppState | null = null;
 export function getState(): AppState {
   if (!state) {
     const social = buildSeedSocial();
+    const posts = buildSeedPosts();
     state = {
       users: seedUsers,
       topics: seedTopics,
-      posts: buildSeedPosts(),
+      posts,
       comments: buildSeedComments(),
       ...social,
       currentUserId: "u5",
+      settings: { ...defaultSettings },
     };
+    const svc = state.users.find((u) => u.id === SERVICE_USER_ID);
+    if (svc) svc.postsCount = posts.filter((p) => p.authorId === SERVICE_USER_ID).length;
   }
   return state;
 }
@@ -507,6 +919,12 @@ export function mutate(fn: (s: AppState) => void) {
 
 export function getUser(id: string) {
   return getState().users.find((u) => u.id === id);
+}
+
+export function isAdmin(userId: string | null) {
+  if (!userId) return false;
+  const u = getUser(userId);
+  return !!u?.isAdmin;
 }
 
 export function nestComments(postId: string): Comment[] {
@@ -535,4 +953,12 @@ export function stripExternalUrls(text: string): string {
 
 export function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function areFriends(a: string, b: string) {
+  return getState().friendships.some(
+    (f) =>
+      f.status === "accepted" &&
+      ((f.userId === a && f.friendId === b) || (f.friendId === a && f.userId === b))
+  );
 }

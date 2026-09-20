@@ -41,6 +41,27 @@ export async function GET(req: Request) {
     return NextResponse.json({
       user,
       posts,
+      comments: s.comments
+        .filter((c) => c.authorId === user.id)
+        .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+        .slice(0, 40)
+        .map((c) => ({
+          ...c,
+          post: s.posts.find((p) => p.id === c.postId)
+            ? {
+                id: s.posts.find((p) => p.id === c.postId)!.id,
+                title: s.posts.find((p) => p.id === c.postId)!.title,
+              }
+            : null,
+        })),
+      following: s.follows
+        .filter((f) => f.followerId === user.id)
+        .map((f) => s.users.find((u) => u.id === f.followingId))
+        .filter(Boolean),
+      followers: s.follows
+        .filter((f) => f.followingId === user.id)
+        .map((f) => s.users.find((u) => u.id === f.followerId))
+        .filter(Boolean),
       isFollowing,
       friendship: friendship || null,
       canFollow: user.profilePublic || isFriend || isSelf,
@@ -188,7 +209,26 @@ export async function POST(req: Request) {
         const b = st.users.find((x) => x.id === f.userId);
         if (a) a.friendsCount += 1;
         if (b) b.friendsCount += 1;
+        st.notifications.unshift({
+          id: uid("n"),
+          userId: f.userId,
+          type: "friend_request",
+          title: "Friend request accepted",
+          body: `${a?.displayName || "Someone"} accepted your friend request`,
+          href: `/users/${me}`,
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
       }
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "reject_friend") {
+    mutate((st) => {
+      st.friendships = st.friendships.filter(
+        (x) => !(x.id === body.friendshipId && x.friendId === me && x.status === "pending")
+      );
     });
     return NextResponse.json({ ok: true });
   }

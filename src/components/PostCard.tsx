@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { MediaEmbed } from "./MediaEmbed";
 
 export type FeedPost = {
@@ -15,6 +15,9 @@ export type FeedPost = {
   commentCount: number;
   createdAt: string;
   imageUrls?: string[];
+  sourceGroup?: string;
+  sourcePlatform?: string;
+  clusterId?: string;
   media?: {
     title?: string;
     description?: string;
@@ -29,6 +32,9 @@ export type FeedPost = {
     tags?: string[];
     thumbnailUrl?: string;
     youtubeVideoId?: string;
+    width?: number;
+    height?: number;
+    orientation?: "portrait" | "landscape" | "square";
   };
   bookmarkedBy: string[];
   likedBy: string[];
@@ -41,6 +47,7 @@ export type FeedPost = {
   };
   topics?: { id: string; name: string; slug: string; color: string }[];
   comments?: NestedComment[];
+  similar?: FeedPost[];
 };
 
 type NestedComment = {
@@ -78,6 +85,12 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [similar, setSimilar] = useState<FeedPost[]>(post.similar || []);
+  const [showSimilar, setShowSimilar] = useState(false);
+
+  useEffect(() => {
+    setSimilar(post.similar || []);
+  }, [post.similar]);
 
   async function act(action: string, extra: Record<string, unknown> = {}) {
     setBusy(true);
@@ -105,11 +118,28 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
   const myVote = meId ? post.voters[meId] : undefined;
   const liked = meId ? post.likedBy.includes(meId) : false;
   const bookmarked = meId ? post.bookmarkedBy.includes(meId) : false;
-  const isShort = post.kind === "short";
+  const orientation =
+    post.media?.orientation ||
+    (post.kind === "short"
+      ? "portrait"
+      : post.media?.width && post.media?.height
+        ? post.media.width < post.media.height
+          ? "portrait"
+          : "landscape"
+        : "landscape");
   const hasVideo = !!post.media?.youtubeVideoId;
 
+  async function loadSimilar() {
+    setShowSimilar(true);
+    if (similar.length) return;
+    const res = await fetch(`/api/posts/${post.id}?similar=1`);
+    if (!res.ok) return;
+    const d = await res.json();
+    setSimilar(d.similar || []);
+  }
+
   return (
-    <article className="card overflow-hidden">
+    <article className="card overflow-hidden" onMouseEnter={() => loadSimilar()}>
       <header className="flex items-start gap-3 px-4 pt-4 sm:px-5">
         {post.author ? (
           <Link href={`/users/${post.author.id}`} className="shrink-0">
@@ -149,6 +179,16 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
             <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
               {post.kind}
             </span>
+            {post.sourceGroup ? (
+              <span className="rounded-full bg-[#e8f4ef] px-2 py-0.5 text-[11px] font-medium text-[#2f6b5a]">
+                {post.sourceGroup}
+              </span>
+            ) : null}
+            {orientation ? (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                {orientation}
+              </span>
+            ) : null}
           </div>
         </div>
       </header>
@@ -168,7 +208,8 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
             videoId={post.media!.youtubeVideoId!}
             title={post.media?.title || post.title}
             poster={post.media?.thumbnailUrl}
-            aspect={isShort ? "short" : "wide"}
+            orientation={orientation}
+            aspect={orientation === "portrait" ? "short" : "wide"}
           />
         </div>
       ) : null}
@@ -181,7 +222,11 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
               key={src}
               src={src}
               alt=""
-              className="max-h-[70vh] w-full object-cover"
+              className={`w-full object-cover ${
+                orientation === "portrait"
+                  ? "max-h-[78vh] object-top"
+                  : "max-h-[70vh]"
+              }`}
             />
           ))}
         </div>
@@ -299,7 +344,33 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
         >
           {bookmarked ? "★ Saved" : "☆ Save"}
         </button>
+        <button type="button" className="action-btn" onClick={loadSimilar}>
+          Similar
+        </button>
       </div>
+
+      {showSimilar && similar.length ? (
+        <div className="border-t border-sky-100 bg-[#f3faf6] px-4 py-3 sm:px-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-[#2f6b5a]">
+            Similar in {post.sourceGroup || post.clusterId || "your interests"}
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {similar.map((s) => (
+              <li key={s.id}>
+                <a
+                  href={`/?focus=${s.id}`}
+                  className="block rounded-xl bg-white/80 px-3 py-2 text-sm font-medium text-[#16324f] hover:bg-white"
+                >
+                  {s.title}
+                  <span className="ml-2 text-xs font-normal text-slate-400">
+                    {s.sourcePlatform || s.kind}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {openComments ? (
         <div className="border-t border-sky-100 bg-[#f7fbff] px-4 py-3 sm:px-5">

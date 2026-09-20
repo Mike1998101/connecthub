@@ -11,8 +11,11 @@ export default function HomeClient() {
   const params = useSearchParams();
   const sort = params.get("sort") || "chronological";
   const topic = params.get("topic") || "";
+  const group = params.get("group") || "";
+  const focus = params.get("focus") || "";
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [groups, setGroups] = useState<string[]>([]);
   const [meId, setMeId] = useState<string | null>(null);
   const [authors, setAuthors] = useState<
     Record<string, { displayName: string; avatarUrl: string }>
@@ -23,6 +26,7 @@ export default function HomeClient() {
     setLoading(true);
     const q = new URLSearchParams({ sort });
     if (topic) q.set("topic", topic);
+    if (group) q.set("group", group);
     const [feed, topicRes, auth, users] = await Promise.all([
       fetch(`/api/posts?${q}`).then((r) => r.json()),
       fetch("/api/topics").then((r) => r.json()),
@@ -30,6 +34,7 @@ export default function HomeClient() {
       fetch("/api/users").then((r) => r.json()),
     ]);
     setPosts(feed.posts || []);
+    setGroups(feed.groups || []);
     setTopics(topicRes.topics || []);
     setMeId(auth.user?.id || null);
     const map: Record<string, { displayName: string; avatarUrl: string }> = {};
@@ -38,11 +43,17 @@ export default function HomeClient() {
     }
     setAuthors(map);
     setLoading(false);
-  }, [sort, topic]);
+  }, [sort, topic, group]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!focus || loading) return;
+    const el = document.getElementById(`post-${focus}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focus, loading, posts]);
 
   const tabs = useMemo(
     () => [
@@ -58,8 +69,8 @@ export default function HomeClient() {
       <section className="px-4 sm:px-0">
         <h1 className="page-title rise-in">Community feed</h1>
         <p className="page-sub">
-          Shorts and music play in-app. External links are stripped so conversations stay on
-          ConnectHub.
+          Shorts, music, and daily curated tech from multiple sources play and discuss in-app.
+          External links are stripped so conversations stay on ConnectHub.
         </p>
       </section>
 
@@ -74,6 +85,30 @@ export default function HomeClient() {
           </a>
         ))}
       </div>
+
+      {groups.length ? (
+        <div className="flex gap-2 overflow-x-auto px-4 sm:px-0">
+          <a
+            href="/"
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              !group ? "bg-[#16324f] text-white" : "bg-white text-slate-600"
+            }`}
+          >
+            All groups
+          </a>
+          {groups.map((g) => (
+            <a
+              key={g}
+              href={`/?group=${encodeURIComponent(g)}`}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                group === g ? "bg-[#2f6b5a] text-white" : "bg-[#e8f4ef] text-[#2f6b5a]"
+              }`}
+            >
+              {g}
+            </a>
+          ))}
+        </div>
+      ) : null}
 
       {sort === "topic" || topic ? (
         <div className="flex gap-2 overflow-x-auto px-4 sm:px-0">
@@ -103,6 +138,7 @@ export default function HomeClient() {
           {posts.map((p, i) => (
             <div
               key={p.id}
+              id={`post-${p.id}`}
               className="rise-in"
               style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
             >

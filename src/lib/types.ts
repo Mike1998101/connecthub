@@ -1,6 +1,32 @@
 export type FeedSort = "chronological" | "trending" | "topic";
 
-export type PostKind = "text" | "image" | "video" | "short" | "music" | "link";
+export type PostKind =
+  | "text"
+  | "image"
+  | "video"
+  | "short"
+  | "music"
+  | "link"
+  | "article"
+  | "news";
+
+export type MediaOrientation = "portrait" | "landscape" | "square";
+
+export type SourcePlatform =
+  | "youtube"
+  | "techcrunch"
+  | "theverge"
+  | "wired"
+  | "gizmodo"
+  | "hackernews"
+  | "reddit"
+  | "producthunt"
+  | "github"
+  | "devto"
+  | "music"
+  | "community"
+  | "bloomberg"
+  | "cnbc";
 
 export interface User {
   id: string;
@@ -17,6 +43,8 @@ export interface User {
   friendsCount: number;
   postsCount: number;
   rating: number;
+  isAdmin?: boolean;
+  isService?: boolean;
 }
 
 export interface Topic {
@@ -46,6 +74,7 @@ export interface MediaDetails {
   audioPreviewUrl?: string;
   width?: number;
   height?: number;
+  orientation?: MediaOrientation;
 }
 
 export interface Comment {
@@ -80,13 +109,19 @@ export interface Post {
   bookmarkedBy: string[];
   likedBy: string[];
   voters: Record<string, 1 | -1>;
+  /** Dedup fingerprint e.g. yt:VIDEO_ID or rss:guid */
+  fingerprint?: string;
+  sourcePlatform?: SourcePlatform;
+  /** Soft cluster for similar-post suggestions */
+  clusterId?: string;
+  sourceGroup?: string;
 }
 
 export interface Friendship {
   id: string;
   userId: string;
   friendId: string;
-  status: "pending" | "accepted";
+  status: "pending" | "accepted" | "rejected";
   createdAt: string;
 }
 
@@ -103,6 +138,9 @@ export interface ChatThread {
   memberIds: string[];
   lastMessageAt: string;
   lastPreview: string;
+  /** peer DMs from non-friends start as request until accepted */
+  status: "open" | "request";
+  requestedBy?: string;
 }
 
 export interface ChatMessage {
@@ -113,10 +151,20 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export type NotificationType =
+  | "friend_request"
+  | "follow"
+  | "comment"
+  | "like"
+  | "mention"
+  | "chat"
+  | "message_request"
+  | "incoming_message";
+
 export interface NotificationItem {
   id: string;
   userId: string;
-  type: "friend_request" | "follow" | "comment" | "like" | "mention" | "chat";
+  type: NotificationType;
   title: string;
   body: string;
   href: string;
@@ -127,6 +175,17 @@ export interface NotificationItem {
 export interface Session {
   userId: string;
   username: string;
+}
+
+export interface AppSettings {
+  /** Public = anonymous can read posts/comments */
+  visibility: "public" | "members";
+  /** Hour (0–23, local server) for daily auto-ingest */
+  dailyIngestHour: number;
+  lastIngestAt: string | null;
+  ingestEnabled: boolean;
+  youtubeChannelIds: string[];
+  enabledSources: SourcePlatform[];
 }
 
 export interface AppState {
@@ -140,4 +199,5 @@ export interface AppState {
   messages: ChatMessage[];
   notifications: NotificationItem[];
   currentUserId: string | null;
+  settings: AppSettings;
 }
