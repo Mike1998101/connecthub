@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { syncMusicFeed, syncYoutubeShorts, listMusicCatalog, runDailyIngest } from "@/lib/youtube";
 import { ensureDailyCron } from "@/lib/cron";
-import { getState, isAdmin } from "@/lib/store";
+import { getCurrentUserId, getSettings, isAdmin } from "@/lib/db";
 
 ensureDailyCron();
 
 export async function POST(req: Request) {
-  const s = getState();
-  const me = s.currentUserId;
-  if (!isAdmin(me)) {
+  const me = await getCurrentUserId();
+  if (!(await isAdmin(me))) {
     return NextResponse.json(
       { error: "Admin only — YouTube RSS ingest publishes as the public service account" },
       { status: 403 }
@@ -20,7 +19,7 @@ export async function POST(req: Request) {
   const limit = Number(body.limit || 5);
 
   if (mode === "daily" || mode === "all") {
-    const music = syncMusicFeed();
+    const music = await syncMusicFeed();
     const ingest = await runDailyIngest({ youtubeLimit: limit, rssLimit: limit });
     return NextResponse.json({
       ingest,
@@ -31,7 +30,8 @@ export async function POST(req: Request) {
   }
 
   const shorts = await syncYoutubeShorts(limit);
-  const music = body.includeMusic === false ? { imported: 0, posts: [] } : syncMusicFeed();
+  const music =
+    body.includeMusic === false ? { imported: 0, posts: [] } : await syncMusicFeed();
   return NextResponse.json({
     shorts,
     music,
@@ -44,10 +44,10 @@ export async function POST(req: Request) {
 
 export async function GET() {
   ensureDailyCron();
-  const s = getState();
+  const settings = await getSettings();
   return NextResponse.json({
     musicCatalog: listMusicCatalog(),
-    settings: s.settings,
+    settings,
     hint: "POST as admin with { mode: 'daily' } for full multi-source ingest, or default YouTube RSS + music",
   });
 }

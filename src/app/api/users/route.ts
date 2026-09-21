@@ -1,22 +1,25 @@
 import { NextResponse } from "next/server";
-import { getState, mutate, uid } from "@/lib/store";
+import {
+  getCurrentUserId,
+  listPosts,
+  listUsers,
+  nestComments,
+  prisma,
+  uid,
+  mapUser,
+  areFriends,
+} from "@/lib/db";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
-  const s = getState();
+  const me = await getCurrentUserId();
 
   if (id) {
-    const user = s.users.find((u) => u.id === id);
+    const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const me = s.currentUserId;
     const isSelf = me === user.id;
-    const isFriend = s.friendships.some(
-      (f) =>
-        f.status === "accepted" &&
-        ((f.userId === me && f.friendId === user.id) ||
-          (f.friendId === me && f.userId === user.id))
-    );
+    const isFriend = me ? await areFriends(me, user.id) : false;
     if (!user.profilePublic && !isSelf && !isFriend) {
       return NextResponse.json({
         user: {
@@ -29,49 +32,74 @@ export async function GET(req: Request) {
         },
       });
     }
-    const posts = s.posts
-      .filter((p) => p.authorId === user.id)
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-    const isFollowing = !!me && s.follows.some((f) => f.followerId === me && f.followingId === user.id);
-    const friendship = s.friendships.find(
-      (f) =>
-        (f.userId === me && f.friendId === user.id) ||
-        (f.friendId === me && f.userId === user.id)
-    );
+    const posts = await listPosts({ authorId: user.id });
+    const comments = await prisma.comment.findMany({
+      where: { authorId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+    });
+    const postIds = [...new Set(comments.map((c) => c.postId))];
+    const commentPosts = await prisma.post.findMany({
+      where: { id: { in: postIds } },
+      select: { id: true, title: true },
+    });
+    const postTitle = new Map(commentPosts.map((p) => [p.id, p.title]));
+    const followingRows = await prisma.follow.findMany({
+      where: { followerId: user.id },
+      include: { following: true },
+    });
+    const followerRows = await prisma.follow.findMany({
+      where: { followingId: user.id },
+      include: { follower: true },
+    });
+    const isFollowing =
+      !!me &&
+      !!(await prisma.follow.findUnique({
+        where: { followerId_followingId: { followerId: me, followingId: user.id } },
+      }));
+    const friendship = me
+      ? await prisma.friendship.findFirst({
+          where: {
+            OR: [
+              { userId: me, friendId: user.id },
+              { friendId: me, userId: user.id },
+            ],
+          },
+        })
+      : null;
+
     return NextResponse.json({
-      user,
+      user: mapUser(user),
       posts,
-      comments: s.comments
-        .filter((c) => c.authorId === user.id)
-        .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-        .slice(0, 40)
-        .map((c) => ({
-          ...c,
-          post: s.posts.find((p) => p.id === c.postId)
-            ? {
-                id: s.posts.find((p) => p.id === c.postId)!.id,
-                title: s.posts.find((p) => p.id === c.postId)!.title,
-              }
-            : null,
-        })),
-      following: s.follows
-        .filter((f) => f.followerId === user.id)
-        .map((f) => s.users.find((u) => u.id === f.followingId))
-        .filter(Boolean),
-      followers: s.follows
-        .filter((f) => f.followingId === user.id)
-        .map((f) => s.users.find((u) => u.id === f.followerId))
-        .filter(Boolean),
+      comments: comments.map((c) => ({
+        ...c,
+        createdAt: c.createdAt.toISOString(),
+        post: postTitle.has(c.postId)
+          ? { id: c.postId, title: postTitle.get(c.postId)! }
+          : null,
+      })),
+      following: followingRows.map((f) => mapUser(f.following)),
+      followers: followerRows.map((f) => mapUser(f.follower)),
       isFollowing,
-      friendship: friendship || null,
+      friendship: friendship
+        ? {
+            id: friendship.id,
+            userId: friendship.userId,
+            friendId: friendship.friendId,
+            status: friendship.status,
+            createdAt: friendship.createdAt.toISOString(),
+          }
+        : null,
       canFollow: user.profilePublic || isFriend || isSelf,
       canAddFriend: user.profilePublic || isSelf,
     });
   }
 
-  const ranked = [...s.users]
+  const users = await listUsers();
+  const allPosts = await listPosts();
+  const ranked = users
     .map((u) => {
-      const userPosts = s.posts.filter((p) => p.authorId === u.id);
+      const userPosts = allPosts.filter((p) => p.authorId === u.id);
       const engagement = userPosts.reduce(
         (n, p) => n + p.upvotes + p.likes + p.commentCount * 2,
         0
@@ -80,155 +108,188 @@ export async function GET(req: Request) {
     })
     .sort((a, b) => b.engagement - a.engagement || b.rating - a.rating);
 
+  const meUser = me ? await prisma.user.findUnique({ where: { id: me } }) : null;
   return NextResponse.json({
     users: ranked,
-    me: s.users.find((u) => u.id === s.currentUserId) || null,
+    me: meUser ? mapUser(meUser) : null,
   });
 }
 
 export async function PATCH(req: Request) {
   const body = await req.json();
-  const s = getState();
-  const me = s.currentUserId;
+  const me = await getCurrentUserId();
   if (!me) return NextResponse.json({ error: "Login required" }, { status: 401 });
 
-  mutate((st) => {
-    const u = st.users.find((x) => x.id === me);
-    if (!u) return;
-    if (typeof body.displayName === "string") u.displayName = body.displayName.slice(0, 60);
-    if (typeof body.bio === "string") u.bio = body.bio.slice(0, 280);
-    if (typeof body.location === "string") u.location = body.location.slice(0, 80);
-    if (typeof body.profilePublic === "boolean") u.profilePublic = body.profilePublic;
-    if (Array.isArray(body.interests)) u.interests = body.interests.slice(0, 12);
+  const updated = await prisma.user.update({
+    where: { id: me },
+    data: {
+      ...(typeof body.displayName === "string"
+        ? { displayName: body.displayName.slice(0, 60) }
+        : {}),
+      ...(typeof body.bio === "string" ? { bio: body.bio.slice(0, 280) } : {}),
+      ...(typeof body.location === "string"
+        ? { location: body.location.slice(0, 80) }
+        : {}),
+      ...(typeof body.profilePublic === "boolean"
+        ? { profilePublic: body.profilePublic }
+        : {}),
+      ...(Array.isArray(body.interests) ? { interests: body.interests.slice(0, 12) } : {}),
+    },
   });
-
-  return NextResponse.json({ user: getState().users.find((u) => u.id === me) });
+  return NextResponse.json({ user: mapUser(updated) });
 }
 
 export async function POST(req: Request) {
   const body = await req.json();
   const action = body.action as string;
   const targetId = body.userId as string;
-  const s = getState();
-  const me = s.currentUserId;
+  const me = await getCurrentUserId();
   if (!me) return NextResponse.json({ error: "Login required" }, { status: 401 });
   if (!targetId || targetId === me) {
     return NextResponse.json({ error: "Invalid target" }, { status: 400 });
   }
-  const target = s.users.find((u) => u.id === targetId);
+  const target = await prisma.user.findUnique({ where: { id: targetId } });
   if (!target) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const meUser = await prisma.user.findUnique({ where: { id: me } });
 
   if (action === "follow") {
     if (!target.profilePublic) {
-      const friend = s.friendships.some(
-        (f) =>
-          f.status === "accepted" &&
-          ((f.userId === me && f.friendId === targetId) ||
-            (f.friendId === me && f.userId === targetId))
-      );
+      const friend = await areFriends(me, targetId);
       if (!friend) {
         return NextResponse.json({ error: "Profile is private" }, { status: 403 });
       }
     }
-    mutate((st) => {
-      const exists = st.follows.find((f) => f.followerId === me && f.followingId === targetId);
-      if (exists) {
-        st.follows = st.follows.filter((f) => !(f.followerId === me && f.followingId === targetId));
-        const u = st.users.find((x) => x.id === targetId);
-        const m = st.users.find((x) => x.id === me);
-        if (u) u.followersCount = Math.max(0, u.followersCount - 1);
-        if (m) m.followingCount = Math.max(0, m.followingCount - 1);
-      } else {
-        st.follows.push({ followerId: me!, followingId: targetId, createdAt: new Date().toISOString() });
-        const u = st.users.find((x) => x.id === targetId);
-        const m = st.users.find((x) => x.id === me);
-        if (u) u.followersCount += 1;
-        if (m) m.followingCount += 1;
-        st.notifications.unshift({
+    const exists = await prisma.follow.findUnique({
+      where: { followerId_followingId: { followerId: me, followingId: targetId } },
+    });
+    if (exists) {
+      await prisma.follow.delete({
+        where: { followerId_followingId: { followerId: me, followingId: targetId } },
+      });
+      await prisma.user.update({
+        where: { id: targetId },
+        data: { followersCount: { decrement: 1 } },
+      });
+      await prisma.user.update({
+        where: { id: me },
+        data: { followingCount: { decrement: 1 } },
+      });
+    } else {
+      await prisma.follow.create({
+        data: { followerId: me, followingId: targetId },
+      });
+      await prisma.user.update({
+        where: { id: targetId },
+        data: { followersCount: { increment: 1 } },
+      });
+      await prisma.user.update({
+        where: { id: me },
+        data: { followingCount: { increment: 1 } },
+      });
+      await prisma.notificationItem.create({
+        data: {
           id: uid("n"),
           userId: targetId,
           type: "follow",
           title: "New follower",
-          body: `${st.users.find((x) => x.id === me)?.displayName} followed you`,
+          body: `${meUser?.displayName} followed you`,
           href: `/users/${me}`,
           read: false,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    });
+        },
+      });
+    }
     return NextResponse.json({ ok: true });
   }
 
   if (action === "friend") {
     if (!target.profilePublic) {
-      return NextResponse.json({ error: "Cannot add private profiles until they invite you" }, { status: 403 });
-    }
-    mutate((st) => {
-      const existing = st.friendships.find(
-        (f) =>
-          (f.userId === me && f.friendId === targetId) ||
-          (f.friendId === me && f.userId === targetId)
+      return NextResponse.json(
+        { error: "Cannot add private profiles until they invite you" },
+        { status: 403 }
       );
-      if (existing) {
-        if (existing.status === "pending" && existing.friendId === me) {
-          existing.status = "accepted";
-          const a = st.users.find((x) => x.id === me);
-          const b = st.users.find((x) => x.id === targetId);
-          if (a) a.friendsCount += 1;
-          if (b) b.friendsCount += 1;
-        }
-        return;
+    }
+    const existing = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { userId: me, friendId: targetId },
+          { friendId: me, userId: targetId },
+        ],
+      },
+    });
+    if (existing) {
+      if (existing.status === "pending" && existing.friendId === me) {
+        await prisma.friendship.update({
+          where: { id: existing.id },
+          data: { status: "accepted" },
+        });
+        await prisma.user.update({
+          where: { id: me },
+          data: { friendsCount: { increment: 1 } },
+        });
+        await prisma.user.update({
+          where: { id: targetId },
+          data: { friendsCount: { increment: 1 } },
+        });
       }
-      st.friendships.push({
+      return NextResponse.json({ ok: true });
+    }
+    await prisma.friendship.create({
+      data: {
         id: uid("f"),
-        userId: me!,
+        userId: me,
         friendId: targetId,
         status: "pending",
-        createdAt: new Date().toISOString(),
-      });
-      st.notifications.unshift({
+      },
+    });
+    await prisma.notificationItem.create({
+      data: {
         id: uid("n"),
         userId: targetId,
         type: "friend_request",
         title: "Friend request",
-        body: `${st.users.find((x) => x.id === me)?.displayName} sent a friend request`,
+        body: `${meUser?.displayName} sent a friend request`,
         href: "/friends",
         read: false,
-        createdAt: new Date().toISOString(),
-      });
+      },
     });
     return NextResponse.json({ ok: true });
   }
 
   if (action === "accept_friend") {
-    mutate((st) => {
-      const f = st.friendships.find((x) => x.id === body.friendshipId && x.friendId === me);
-      if (f && f.status === "pending") {
-        f.status = "accepted";
-        const a = st.users.find((x) => x.id === me);
-        const b = st.users.find((x) => x.id === f.userId);
-        if (a) a.friendsCount += 1;
-        if (b) b.friendsCount += 1;
-        st.notifications.unshift({
+    const f = await prisma.friendship.findFirst({
+      where: { id: body.friendshipId, friendId: me, status: "pending" },
+    });
+    if (f) {
+      await prisma.friendship.update({
+        where: { id: f.id },
+        data: { status: "accepted" },
+      });
+      await prisma.user.update({
+        where: { id: me },
+        data: { friendsCount: { increment: 1 } },
+      });
+      await prisma.user.update({
+        where: { id: f.userId },
+        data: { friendsCount: { increment: 1 } },
+      });
+      await prisma.notificationItem.create({
+        data: {
           id: uid("n"),
           userId: f.userId,
           type: "friend_request",
           title: "Friend request accepted",
-          body: `${a?.displayName || "Someone"} accepted your friend request`,
+          body: `${meUser?.displayName || "Someone"} accepted your friend request`,
           href: `/users/${me}`,
           read: false,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    });
+        },
+      });
+    }
     return NextResponse.json({ ok: true });
   }
 
   if (action === "reject_friend") {
-    mutate((st) => {
-      st.friendships = st.friendships.filter(
-        (x) => !(x.id === body.friendshipId && x.friendId === me && x.status === "pending")
-      );
+    await prisma.friendship.deleteMany({
+      where: { id: body.friendshipId, friendId: me, status: "pending" },
     });
     return NextResponse.json({ ok: true });
   }

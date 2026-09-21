@@ -1,10 +1,13 @@
-import {
-  getState,
-  mutate,
+﻿import {
+  createPost,
+  fingerprintExists,
+  getSettings,
+  listSourceGroups,
   stripExternalUrls,
-  uid,
+  updateSettings,
   SERVICE_USER_ID,
-} from "./store";
+} from "./db";
+import { formatIngestBody } from "./content";
 import { DEFAULT_YT_CHANNELS } from "./channels";
 import { clusterIdFor, detectOrientation, extractRssItems } from "./similarity";
 import type { Post, SourcePlatform } from "./types";
@@ -88,31 +91,14 @@ async function fetchText(url: string, timeoutMs = 12000): Promise<string> {
   }
 }
 
-function fingerprintExists(fp: string) {
-  return getState().posts.some((p) => p.fingerprint === fp);
-}
-
-function publishPost(partial: Omit<Post, "id" | "createdAt" | "updatedAt" | "upvotes" | "downvotes" | "likes" | "commentCount" | "bookmarkedBy" | "likedBy" | "voters"> & Partial<Post>) {
-  const post: Post = {
-    id: uid("p"),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    upvotes: Math.floor(Math.random() * 40),
-    downvotes: 0,
-    likes: Math.floor(Math.random() * 25),
-    commentCount: 0,
-    bookmarkedBy: [],
-    likedBy: [],
-    voters: {},
+async function publishPost(
+  partial: Parameters<typeof createPost>[0] & { upvotes?: number; likes?: number }
+): Promise<Post> {
+  return createPost({
     ...partial,
-  };
-  mutate((s) => {
-    if (post.fingerprint && s.posts.some((p) => p.fingerprint === post.fingerprint)) return;
-    s.posts.unshift(post);
-    const topic = s.topics.find((t) => post.topicIds.includes(t.id));
-    if (topic) topic.postCount += 1;
+    upvotes: partial.upvotes ?? Math.floor(Math.random() * 40),
+    likes: partial.likes ?? Math.floor(Math.random() * 25),
   });
-  return post;
 }
 
 /**
@@ -156,7 +142,7 @@ export async function syncYoutubeChannelRss(
       ];
       const description =
         item.description ||
-        `${item.title} — ingested from channel RSS for in-app viewing and discussion.`;
+        `${item.title} â€” ingested from channel RSS for in-app viewing and discussion.`;
       const body = stripExternalUrls(
         `${description}\n\nTarget discussion: What stood out? Drop nested comments on pacing, topic angle, or how this connects to other ${isShortGuess ? "shorts" : "uploads"} in this cluster.`
       );
@@ -199,8 +185,8 @@ export async function syncYoutubeChannelRss(
 }
 
 export async function syncAllYoutubeChannels(limitPerChannel = 5): Promise<IngestResult[]> {
-  const ids = getState().settings.youtubeChannelIds.length
-    ? getState().settings.youtubeChannelIds
+  const ids = (await getSettings()).youtubeChannelIds.length
+    ? (await getSettings()).youtubeChannelIds
     : DEFAULT_YT_CHANNELS.map((c) => c.id);
   const out: IngestResult[] = [];
   for (const id of ids) {
@@ -231,7 +217,7 @@ export async function syncRssSource(
       }
       const description = item.description || item.title;
       const body = stripExternalUrls(
-        `${description}\n\nDiscussion prompt: Which angle matters most for ConnectHub members interested in ${tags.slice(0, 2).join(" & ")}? Share takes in comments — outbound links stay removed.`
+        `${description}\n\nDiscussion prompt: Which angle matters most for ConnectHub members interested in ${tags.slice(0, 2).join(" & ")}? Share takes in comments â€” outbound links stay removed.`
       );
       const post = publishPost({
         authorId: SERVICE_USER_ID,
@@ -271,7 +257,7 @@ export async function syncRssSource(
   }
 }
 
-/** Hacker News official Firebase API — no key */
+/** Hacker News official Firebase API â€” no key */
 export async function syncHackerNews(limit = 8): Promise<IngestResult> {
   const platform: SourcePlatform = "hackernews";
   try {
@@ -300,11 +286,11 @@ export async function syncHackerNews(limit = 8): Promise<IngestResult> {
       const description = stripExternalUrls(
         item.text
           ? item.text.replace(/<[^>]+>/g, " ")
-          : `${item.title} — trending on Hacker News (${item.score || 0} points).`
+          : `${item.title} â€” trending on Hacker News (${item.score || 0} points).`
       );
       const tags = ["hackernews", "startups", "developers"];
       const body = stripExternalUrls(
-        `${description}\n\nHN discussion angle: Would you build on this? Comment with technical takes — no outbound hops.`
+        `${description}\n\nHN discussion angle: Would you build on this? Comment with technical takes â€” no outbound hops.`
       );
       const post = publishPost({
         authorId: SERVICE_USER_ID,
@@ -384,7 +370,7 @@ export async function syncReddit(
       const tags = ["reddit", subreddit, d.link_flair_text || "discussion"].filter(Boolean);
       const description = stripExternalUrls(
         (d.selftext || d.title).slice(0, 900) +
-          `\n\nr/${subreddit} · ${d.score} upvotes · ${d.num_comments} comments`
+          `\n\nr/${subreddit} Â· ${d.score} upvotes Â· ${d.num_comments} comments`
       );
       const thumb =
         d.thumbnail && d.thumbnail.startsWith("http") ? d.thumbnail : undefined;
@@ -458,14 +444,14 @@ export async function syncGithubTrending(limit = 6): Promise<IngestResult> {
       }
       const tags = ["github", "opensource", (repo.language || "code").toLowerCase()];
       const description = stripExternalUrls(
-        `${repo.description || name} — trending open-source (${repo.stars || 0}★). Language: ${repo.language || "n/a"}.`
+        `${repo.description || name} â€” trending open-source (${repo.stars || 0}â˜…). Language: ${repo.language || "n/a"}.`
       );
       const post = publishPost({
         authorId: SERVICE_USER_ID,
         kind: "article",
         title: `Trending: ${name}`.slice(0, 120),
         body: stripExternalUrls(
-          `${description}\n\nDev prompt: Would you star this? Comment on use-cases — repo links stay in-app only as titles.`
+          `${description}\n\nDev prompt: Would you star this? Comment on use-cases â€” repo links stay in-app only as titles.`
         ),
         topicIds: ["t6"],
         media: {
@@ -491,7 +477,7 @@ export async function syncGithubTrending(limit = 6): Promise<IngestResult> {
     const fallback = [
       {
         name: "vercel/next.js",
-        description: "The React Framework for the Web — still dominating daily trends.",
+        description: "The React Framework for the Web â€” still dominating daily trends.",
         language: "TypeScript",
         stars: 130000,
       },
@@ -554,7 +540,7 @@ export async function runDailyIngest(opts?: {
   ranAt: string;
   groups: string[];
 }> {
-  const enabled = new Set(getState().settings.enabledSources);
+  const enabled = new Set((await getSettings()).enabledSources);
   const results: IngestResult[] = [];
 
   if (enabled.has("youtube")) {
@@ -603,3 +589,4 @@ export async function runDailyIngest(opts?: {
 }
 
 export { detectOrientation, RSS_SOURCES };
+

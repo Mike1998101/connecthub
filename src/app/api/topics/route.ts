@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getState } from "@/lib/store";
+import { listTopics } from "@/lib/db";
 
 export async function GET() {
-  const s = getState();
-  return NextResponse.json({ topics: s.topics });
+  const topics = await listTopics();
+  return NextResponse.json({ topics });
 }

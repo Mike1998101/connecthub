@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { getState, isAdmin, mutate } from "@/lib/store";
+import {
+  getCurrentUserId,
+  getSettings,
+  isAdmin,
+  listSourceGroups,
+  prisma,
+  updateSettings,
+} from "@/lib/db";
 import { ensureDailyCron, updateIngestSchedule } from "@/lib/cron";
 import { runDailyIngest } from "@/lib/scrapers";
 import type { SourcePlatform } from "@/lib/types";
@@ -7,57 +14,52 @@ import type { SourcePlatform } from "@/lib/types";
 ensureDailyCron();
 
 export async function GET() {
-  const s = getState();
-  const groups = Array.from(
-    new Set(s.posts.map((p) => p.sourceGroup).filter(Boolean) as string[])
-  );
+  const settings = await getSettings();
+  const groups = await listSourceGroups();
+  const posts = await prisma.post.findMany({ select: { sourcePlatform: true } });
   const byPlatform: Record<string, number> = {};
-  for (const p of s.posts) {
+  for (const p of posts) {
     const key = p.sourcePlatform || "unknown";
     byPlatform[key] = (byPlatform[key] || 0) + 1;
   }
   return NextResponse.json({
-    settings: s.settings,
+    settings,
     groups,
     byPlatform,
-    publicReadable: s.settings.visibility === "public",
+    publicReadable: settings.visibility === "public",
   });
 }
 
 export async function PATCH(req: Request) {
-  const s = getState();
-  if (!isAdmin(s.currentUserId)) {
+  const me = await getCurrentUserId();
+  if (!(await isAdmin(me))) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
   const body = await req.json();
   if (typeof body.dailyIngestHour === "number") {
-    updateIngestSchedule(body.dailyIngestHour, body.ingestEnabled);
+    await updateIngestSchedule(body.dailyIngestHour, body.ingestEnabled);
   } else if (typeof body.ingestEnabled === "boolean") {
-    mutate((st) => {
-      st.settings.ingestEnabled = body.ingestEnabled;
-    });
+    await updateSettings({ ingestEnabled: body.ingestEnabled });
   }
   if (body.visibility === "public" || body.visibility === "members") {
-    mutate((st) => {
-      st.settings.visibility = body.visibility;
-    });
+    await updateSettings({ visibility: body.visibility });
   }
   if (Array.isArray(body.youtubeChannelIds)) {
-    mutate((st) => {
-      st.settings.youtubeChannelIds = body.youtubeChannelIds.map(String).slice(0, 12);
+    await updateSettings({
+      youtubeChannelIds: body.youtubeChannelIds.map(String).slice(0, 12),
     });
   }
   if (Array.isArray(body.enabledSources)) {
-    mutate((st) => {
-      st.settings.enabledSources = body.enabledSources as SourcePlatform[];
+    await updateSettings({
+      enabledSources: body.enabledSources as SourcePlatform[],
     });
   }
-  return NextResponse.json({ settings: getState().settings });
+  return NextResponse.json({ settings: await getSettings() });
 }
 
 export async function POST(req: Request) {
-  const s = getState();
-  if (!isAdmin(s.currentUserId)) {
+  const me = await getCurrentUserId();
+  if (!(await isAdmin(me))) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
   const body = await req.json().catch(() => ({}));

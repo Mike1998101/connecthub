@@ -1,35 +1,34 @@
 import { NextResponse } from "next/server";
-import { getState, mutate } from "@/lib/store";
+import { getCurrentUserId, prisma, mapNotification } from "@/lib/db";
 
 export async function GET() {
-  const s = getState();
-  const me = s.currentUserId;
+  const me = await getCurrentUserId();
   if (!me) return NextResponse.json({ error: "Login required" }, { status: 401 });
-  const items = s.notifications
-    .filter((n) => n.userId === me)
-    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const items = await prisma.notificationItem.findMany({
+    where: { userId: me },
+    orderBy: { createdAt: "desc" },
+  });
+  const notifications = items.map(mapNotification);
   return NextResponse.json({
-    notifications: items,
-    unread: items.filter((n) => !n.read).length,
+    notifications,
+    unread: notifications.filter((n) => !n.read).length,
   });
 }
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const s = getState();
-  const me = s.currentUserId;
+  const me = await getCurrentUserId();
   if (!me) return NextResponse.json({ error: "Login required" }, { status: 401 });
 
   if (body.action === "read_all") {
-    mutate((st) => {
-      st.notifications.forEach((n) => {
-        if (n.userId === me) n.read = true;
-      });
+    await prisma.notificationItem.updateMany({
+      where: { userId: me },
+      data: { read: true },
     });
   } else if (body.action === "read" && body.id) {
-    mutate((st) => {
-      const n = st.notifications.find((x) => x.id === body.id && x.userId === me);
-      if (n) n.read = true;
+    await prisma.notificationItem.updateMany({
+      where: { id: body.id, userId: me },
+      data: { read: true },
     });
   }
 

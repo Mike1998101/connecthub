@@ -1,0 +1,220 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id              String   @id
+  username        String   @unique
+  displayName     String
+  bio             String   @default("")
+  avatarUrl       String
+  profilePublic   Boolean  @default(true)
+  joinedAt        DateTime @default(now())
+  location        String?
+  interests       String[] @default([])
+  followersCount  Int      @default(0)
+  followingCount  Int      @default(0)
+  friendsCount    Int      @default(0)
+  postsCount      Int      @default(0)
+  rating          Float    @default(0)
+  isAdmin         Boolean  @default(false)
+  isService       Boolean  @default(false)
+  email           String?  @unique
+  googleId        String?  @unique
+
+  posts              Post[]            @relation("PostAuthor")
+  comments           Comment[]         @relation("CommentAuthor")
+  friendshipsSent    Friendship[]      @relation("FriendshipSender")
+  friendshipsRecv    Friendship[]      @relation("FriendshipReceiver")
+  following          Follow[]          @relation("Follower")
+  followers          Follow[]          @relation("Following")
+  chatMemberships    ChatMember[]
+  messagesSent       ChatMessage[]     @relation("MessageSender")
+  notifications      NotificationItem[]
+  chatRequests       ChatThread[]      @relation("ChatRequester")
+
+  @@map("users")
+}
+
+model Topic {
+  id          String @id
+  slug        String @unique
+  name        String
+  description String @default("")
+  postCount   Int    @default(0)
+  color       String @default("#5B8DEF")
+
+  posts PostTopic[]
+
+  @@map("topics")
+}
+
+model Post {
+  id             String   @id
+  authorId       String
+  kind           String
+  title          String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  upvotes        Int      @default(0)
+  downvotes      Int      @default(0)
+  likes          Int      @default(0)
+  commentCount   Int      @default(0)
+  /// MediaDetails JSON blob
+  media          Json?
+  imageUrls      String[] @default([])
+  sourceHidden   Boolean  @default(true)
+  bookmarkedBy   String[] @default([])
+  likedBy        String[] @default([])
+  /// Record<userId, 1 | -1>
+  voters         Json     @default("{}")
+  fingerprint    String?  @unique
+  sourcePlatform String?
+  clusterId      String?
+  sourceGroup    String?
+
+  author   User         @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  topics   PostTopic[]
+  comments Comment[]
+
+  @@index([authorId])
+  @@index([createdAt])
+  @@index([sourceGroup])
+  @@index([sourcePlatform])
+  @@map("posts")
+}
+
+model PostTopic {
+  postId  String
+  topicId String
+
+  post  Post  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([postId, topicId])
+  @@map("post_topics")
+}
+
+model Comment {
+  id        String   @id
+  postId    String
+  authorId  String
+  parentId  String?
+  body      String
+  createdAt DateTime @default(now())
+  upvotes   Int      @default(0)
+  downvotes Int      @default(0)
+
+  post    Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author  User     @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  parent  Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Comment[] @relation("CommentReplies")
+
+  @@index([postId])
+  @@index([authorId])
+  @@map("comments")
+}
+
+model Friendship {
+  id        String   @id
+  userId    String
+  friendId  String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  user   User @relation("FriendshipSender", fields: [userId], references: [id], onDelete: Cascade)
+  friend User @relation("FriendshipReceiver", fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, friendId])
+  @@index([friendId])
+  @@map("friendships")
+}
+
+model Follow {
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@map("follows")
+}
+
+model ChatThread {
+  id            String   @id
+  type          String
+  title         String
+  lastMessageAt DateTime @default(now())
+  lastPreview   String   @default("")
+  status        String   @default("open")
+  requestedById String?
+
+  requestedBy User?        @relation("ChatRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  members     ChatMember[]
+  messages    ChatMessage[]
+
+  @@map("chat_threads")
+}
+
+model ChatMember {
+  threadId String
+  userId   String
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([threadId, userId])
+  @@map("chat_members")
+}
+
+model ChatMessage {
+  id        String   @id
+  threadId  String
+  senderId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User       @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+  @@map("chat_messages")
+}
+
+model NotificationItem {
+  id        String   @id
+  userId    String
+  type      String
+  title     String
+  body      String
+  href      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model AppSettings {
+  id                 Int       @id @default(1)
+  visibility         String    @default("public")
+  dailyIngestHour    Int       @default(8)
+  lastIngestAt       DateTime?
+  ingestEnabled      Boolean   @default(true)
+  youtubeChannelIds  String[]  @default([])
+  enabledSources     String[]  @default([])
+  currentUserId      String?
+
+  @@map("app_settings")
+}
