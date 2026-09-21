@@ -1,4 +1,4 @@
-import { getState, mutate } from "./store";
+import { getSettings, updateSettings } from "./db";
 import { runDailyIngest } from "./scrapers";
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -14,22 +14,20 @@ export function ensureDailyCron() {
   timer = setInterval(() => {
     void tick();
   }, 60_000);
-  // Also attempt once on boot if overdue
   void tick();
 }
 
 async function tick() {
-  const s = getState();
-  if (!s.settings.ingestEnabled) return;
+  const settings = await getSettings();
+  if (!settings.ingestEnabled) return;
   const now = new Date();
-  if (now.getHours() !== s.settings.dailyIngestHour) return;
-  const last = s.settings.lastIngestAt ? new Date(s.settings.lastIngestAt) : null;
+  if (now.getHours() !== settings.dailyIngestHour) return;
+  const last = settings.lastIngestAt ? new Date(settings.lastIngestAt) : null;
   if (last && sameDay(last, now)) return;
   try {
     await runDailyIngest({ youtubeLimit: 4, rssLimit: 5 });
   } catch {
-    // swallow — next minute will not retry same day once lastIngestAt set;
-    // only set on success inside runDailyIngest
+    // swallow — retry next minute until lastIngestAt is set on success
   }
 }
 
@@ -47,10 +45,9 @@ export function stopDailyCron() {
   started = false;
 }
 
-export function updateIngestSchedule(hour: number, enabled?: boolean) {
-  mutate((st) => {
-    st.settings.dailyIngestHour = Math.max(0, Math.min(23, Math.floor(hour)));
-    if (typeof enabled === "boolean") st.settings.ingestEnabled = enabled;
+export async function updateIngestSchedule(hour: number, enabled?: boolean) {
+  return updateSettings({
+    dailyIngestHour: Math.max(0, Math.min(23, Math.floor(hour))),
+    ...(typeof enabled === "boolean" ? { ingestEnabled: enabled } : {}),
   });
-  return getState().settings;
 }

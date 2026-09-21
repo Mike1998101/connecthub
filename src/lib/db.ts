@@ -22,6 +22,7 @@ import type {
   User,
 } from "./types";
 import { DEFAULT_YT_CHANNELS } from "./channels";
+import { formatIngestBody, looksLikeHtml, mergeUniqueUrls } from "./content";
 
 export const SERVICE_USER_ID = "u_service";
 export const ADMIN_USER_ID = "u5";
@@ -52,7 +53,7 @@ const defaultSettingsData = {
     "devto",
     "music",
   ],
-  currentUserId: "u5" as string | null,
+  currentUserId: null as string | null,
 };
 
 export async function ensureSettings() {
@@ -71,8 +72,7 @@ export async function getCurrentUserId(): Promise<string | null> {
   } catch {
     // non-request context (cron/scripts)
   }
-  const s = await ensureSettings();
-  return s.currentUserId;
+  return null;
 }
 
 export async function setCurrentUserId(userId: string | null) {
@@ -162,12 +162,52 @@ export async function listPosts(opts?: {
   if (opts?.bookmarkedBy) where.bookmarkedBy = { has: opts.bookmarkedBy };
   if (opts?.topicId) where.topics = { some: { topicId: opts.topicId } };
 
+  await persistSanitizedHtmlPosts();
   const rows = await prisma.post.findMany({
     where,
     include: postInclude,
     orderBy: { createdAt: "desc" },
   });
   return rows.map(mapPost);
+}
+
+let htmlSanitizeStarted = false;
+async function persistSanitizedHtmlPosts() {
+  if (htmlSanitizeStarted) return;
+  htmlSanitizeStarted = true;
+  try {
+    const dirty = await prisma.post.findMany({
+      where: {
+        OR: [{ body: { contains: "<" } }, { body: { contains: "&lt;" } }],
+      },
+    });
+    for (const p of dirty) {
+      if (!looksLikeHtml(p.body) && !looksLikeHtml(p.title)) continue;
+      const formatted = formatIngestBody(p.body);
+      const title = looksLikeHtml(p.title)
+        ? formatIngestBody(p.title).body.slice(0, 120)
+        : p.title;
+      const media = (p.media as MediaDetails | null) ?? null;
+      const nextMedia =
+        media && media.description && looksLikeHtml(media.description)
+          ? { ...media, description: formatIngestBody(media.description).body }
+          : media;
+      const yt = formatted.youtubeVideoId || nextMedia?.youtubeVideoId;
+      await prisma.post.update({
+        where: { id: p.id },
+        data: {
+          title,
+          body: formatted.body,
+          imageUrls: mergeUniqueUrls(p.imageUrls, formatted.imageUrls),
+          media: (yt
+            ? { ...(nextMedia || {}), youtubeVideoId: yt }
+            : nextMedia) as Prisma.InputJsonValue | undefined,
+        },
+      });
+    }
+  } catch {
+    htmlSanitizeStarted = false;
+  }
 }
 
 export async function getPostById(id: string): Promise<Post | null> {
@@ -178,6 +218,12 @@ export async function getPostById(id: string): Promise<Post | null> {
 export async function fingerprintExists(fp: string) {
   const n = await prisma.post.count({ where: { fingerprint: fp } });
   return n > 0;
+}
+
+function resolvedKind(kind: string, youtubeVideoId?: string) {
+  if (!youtubeVideoId) return kind;
+  if (kind === "music" || kind === "short" || kind === "video") return kind;
+  return "video";
 }
 
 export async function createPost(input: {
@@ -206,16 +252,34 @@ export async function createPost(input: {
     if (existing) return mapPost(existing);
   }
 
+  const formattedBody = formatIngestBody(input.body || "");
+  const titleSource = looksLikeHtml(input.title)
+    ? formatIngestBody(input.title).body
+    : input.title;
+  const imageUrls = mergeUniqueUrls(input.imageUrls, formattedBody.imageUrls);
+  const media = input.media
+    ? {
+        ...input.media,
+        description:
+          input.media.description && looksLikeHtml(input.media.description)
+            ? formatIngestBody(input.media.description).body
+            : input.media.description,
+        youtubeVideoId: input.media.youtubeVideoId || formattedBody.youtubeVideoId,
+      }
+    : formattedBody.youtubeVideoId
+      ? { youtubeVideoId: formattedBody.youtubeVideoId, orientation: "landscape" as const }
+      : undefined;
+
   const id = input.id || uid("p");
   const row = await prisma.post.create({
     data: {
       id,
       authorId: input.authorId,
-      kind: input.kind,
-      title: input.title.slice(0, 120),
-      body: input.body,
-      media: (input.media ?? undefined) as Prisma.InputJsonValue | undefined,
-      imageUrls: input.imageUrls ?? [],
+      kind: resolvedKind(input.kind, formattedBody.youtubeVideoId || media?.youtubeVideoId),
+      title: titleSource.slice(0, 120),
+      body: formattedBody.body,
+      media: (media ?? undefined) as Prisma.InputJsonValue | undefined,
+      imageUrls,
       sourceHidden: input.sourceHidden ?? true,
       fingerprint: input.fingerprint,
       sourcePlatform: input.sourcePlatform,

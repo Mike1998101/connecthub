@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   getCurrentUserId,
   getUserByUsername,
-  listUsers,
   prisma,
   setCurrentUserId,
   mapUser,
@@ -28,17 +27,10 @@ export async function POST(req: Request) {
 
   if (action === "login") {
     const username = String(body.username || "you").toLowerCase();
-    const user =
-      (await getUserByUsername(username)) ||
-      (await prisma.user.findUnique({ where: { id: "u5" } }));
+    const user = await getUserByUsername(username);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
-    const mapped = "username" in user && "joinedAt" in user && typeof (user as { joinedAt: unknown }).joinedAt !== "string"
-      ? mapUser(user as Parameters<typeof mapUser>[0])
-      : (user as ReturnType<typeof mapUser>);
-    const id = "id" in user ? user.id : mapped.id;
-    await setCurrentUserId(id);
-    const fresh = await prisma.user.findUnique({ where: { id } });
-    return NextResponse.json({ user: fresh ? mapUser(fresh) : null });
+    await setCurrentUserId(user.id);
+    return NextResponse.json({ user });
   }
 
   if (action === "logout") {
@@ -72,11 +64,19 @@ export async function POST(req: Request) {
 
   if (action === "google_url") {
     const origin = new URL(req.url).origin;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !anonKey) {
+      return NextResponse.json(
+        {
+          error:
+            "Google sign-in needs NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY. Enable the Google provider in Supabase Auth and add the callback URL /api/auth/callback.",
+        },
+        { status: 400 }
+      );
+    }
     const jar = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
+    const supabase = createServerClient(supabaseUrl, anonKey, {
         cookies: {
           getAll: () => jar.getAll(),
           setAll: (items) => {

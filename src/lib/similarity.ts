@@ -1,4 +1,5 @@
 import type { MediaOrientation, Post, SourcePlatform } from "./types";
+import { extractImagesFromHtml, extractYoutubeIdFromHtml, htmlToPlainText } from "./content";
 
 export function detectOrientation(width?: number, height?: number): MediaOrientation {
   if (!width || !height) return "landscape";
@@ -73,16 +74,20 @@ export function extractRssItems(xml: string): Array<{
   description: string;
   guid: string;
   publishedAt: string;
+  link?: string;
   thumbnail?: string;
   videoId?: string;
+  imageUrls: string[];
 }> {
   const items: Array<{
     title: string;
     description: string;
     guid: string;
     publishedAt: string;
+    link?: string;
     thumbnail?: string;
     videoId?: string;
+    imageUrls: string[];
   }> = [];
 
   // Atom entries (YouTube)
@@ -103,13 +108,17 @@ export function extractRssItems(xml: string): Array<{
       (id && !id.includes(":") ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : undefined);
     const videoId = pick(entry, /<yt:videoId>([\s\S]*?)<\/yt:videoId>/i);
     if (!title || !id) continue;
+    const rawDesc = decodeXml(mediaDesc);
+    const yt = videoId || extractYoutubeIdFromHtml(entry + rawDesc);
+    const imageUrls = extractImagesFromHtml(entry + rawDesc);
     items.push({
-      title: decodeXml(stripHtml(title)),
-      description: decodeXml(stripHtml(mediaDesc)).slice(0, 1200),
-      guid: videoId ? `yt:${videoId}` : id,
+      title: htmlToPlainText(decodeXml(title)).slice(0, 180),
+      description: rawDesc,
+      guid: yt ? `yt:${yt}` : id,
       publishedAt: published,
       thumbnail: thumb,
-      videoId: videoId || undefined,
+      videoId: yt || undefined,
+      imageUrls,
     });
   }
 
@@ -119,13 +128,21 @@ export function extractRssItems(xml: string): Array<{
   const rssItems = xml.match(/<item[\s\S]*?<\/item>/gi) || [];
   for (const item of rssItems) {
     const title = pick(item, /<title[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/title>/i);
+    const encoded = pick(
+      item,
+      /<content:encoded[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/content:encoded>/i
+    );
     const desc =
+      encoded ||
       pick(item, /<description[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/description>/i) ||
-      pick(item, /<content:encoded[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/content:encoded>/i) ||
       "";
+    const link =
+      pickAttr(item, /<link[^>]+href="([^"]+)"/i) ||
+      pick(item, /<link[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/link>/i) ||
+      undefined;
     const guid =
       pick(item, /<guid[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/guid>/i) ||
-      pick(item, /<link[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([\s\S]*?))<\/link>/i) ||
+      link ||
       title;
     const published =
       pick(item, /<pubDate>([\s\S]*?)<\/pubDate>/i) ||
@@ -133,19 +150,26 @@ export function extractRssItems(xml: string): Array<{
       new Date().toISOString();
     const thumb =
       pickAttr(item, /<media:thumbnail[^>]*url="([^"]+)"/i) ||
-      pickAttr(item, /<media:content[^>]*url="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i) ||
-      pickAttr(item, /<enclosure[^>]*url="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i) ||
+      pickAttr(item, /<media:content[^>]*url="([^"]+\.(?:jpe?g|png|webp|gif)[^"]*)"/i) ||
+      pickAttr(item, /<enclosure[^>]*url="([^"]+\.(?:jpe?g|png|webp|gif)[^"]*)"/i) ||
       undefined;
     if (!title || !guid) continue;
     let publishedIso = published;
     const parsed = Date.parse(published);
     if (!Number.isNaN(parsed)) publishedIso = new Date(parsed).toISOString();
+    const rawDesc = decodeXml(desc);
+    const imageUrls = extractImagesFromHtml(item + rawDesc);
+    if (thumb && !imageUrls.includes(thumb)) imageUrls.unshift(thumb);
+    const videoId = extractYoutubeIdFromHtml(item + rawDesc + (link || ""));
     items.push({
-      title: decodeXml(stripHtml(title)),
-      description: decodeXml(stripHtml(desc)).slice(0, 1200),
+      title: htmlToPlainText(decodeXml(title)).slice(0, 180),
+      description: rawDesc,
       guid: guid.trim(),
       publishedAt: publishedIso,
-      thumbnail: thumb,
+      link: link ? decodeXml(link).trim() : undefined,
+      thumbnail: thumb || imageUrls[0],
+      videoId,
+      imageUrls,
     });
   }
 

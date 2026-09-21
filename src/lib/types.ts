@@ -45,6 +45,8 @@ export interface User {
   rating: number;
   isAdmin?: boolean;
   isService?: boolean;
+  email?: string;
+  googleId?: string;
 }
 
 export interface Topic {

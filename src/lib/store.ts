@@ -1,6 +1,4 @@
 import type {
-  AppSettings,
-  AppState,
   Comment,
   Post,
   Topic,
@@ -12,7 +10,6 @@ import type {
   NotificationItem,
 } from "./types";
 import { clusterIdFor } from "./similarity";
-import { DEFAULT_YT_CHANNELS } from "./channels";
 
 const now = Date.now();
 const hoursAgo = (h: number) => new Date(now - h * 3600_000).toISOString();
@@ -248,26 +245,6 @@ export const curatedArtists = [
       "Velvet R&B ballad energy — comments and reactions stay nested under the post.",
   },
 ];
-
-const defaultSettings: AppSettings = {
-  visibility: "public",
-  dailyIngestHour: 8,
-  lastIngestAt: null,
-  ingestEnabled: true,
-  youtubeChannelIds: DEFAULT_YT_CHANNELS.map((c) => c.id),
-  enabledSources: [
-    "youtube",
-    "techcrunch",
-    "theverge",
-    "wired",
-    "gizmodo",
-    "hackernews",
-    "reddit",
-    "github",
-    "devto",
-    "music",
-  ],
-};
 
 export function buildSeedPosts(): Post[] {
   const shorts = curatedShortIds.map((s, i) => {
@@ -883,82 +860,4 @@ export function buildSeedSocial() {
     },
   ];
   return { friendships, follows, chats, messages, notifications };
-}
-
-let state: AppState | null = null;
-
-export function getState(): AppState {
-  if (!state) {
-    const social = buildSeedSocial();
-    const posts = buildSeedPosts();
-    state = {
-      users: seedUsers,
-      topics: seedTopics,
-      posts,
-      comments: buildSeedComments(),
-      ...social,
-      currentUserId: "u5",
-      settings: { ...defaultSettings },
-    };
-    const svc = state.users.find((u) => u.id === SERVICE_USER_ID);
-    if (svc) svc.postsCount = posts.filter((p) => p.authorId === SERVICE_USER_ID).length;
-  }
-  return state;
-}
-
-export function setState(next: AppState) {
-  state = next;
-}
-
-export function mutate(fn: (s: AppState) => void) {
-  const s = getState();
-  fn(s);
-  setState(s);
-  return s;
-}
-
-export function getUser(id: string) {
-  return getState().users.find((u) => u.id === id);
-}
-
-export function isAdmin(userId: string | null) {
-  if (!userId) return false;
-  const u = getUser(userId);
-  return !!u?.isAdmin;
-}
-
-export function nestComments(postId: string): Comment[] {
-  const all = getState().comments.filter((c) => c.postId === postId);
-  const byParent = new Map<string | null, Comment[]>();
-  for (const c of all) {
-    const key = c.parentId;
-    if (!byParent.has(key)) byParent.set(key, []);
-    byParent.get(key)!.push({ ...c, replies: [] });
-  }
-  const attach = (nodes: Comment[]): Comment[] =>
-    nodes.map((n) => ({
-      ...n,
-      replies: attach(byParent.get(n.id) ?? []),
-    }));
-  return attach(byParent.get(null) ?? []);
-}
-
-export function stripExternalUrls(text: string): string {
-  return text
-    .replace(/https?:\/\/\S+/gi, "[link removed — stay on ConnectHub]")
-    .replace(/www\.\S+/gi, "[link removed — stay on ConnectHub]")
-    .replace(/youtu\.be\/\S+/gi, "")
-    .replace(/youtube\.com\/\S+/gi, "");
-}
-
-export function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-export function areFriends(a: string, b: string) {
-  return getState().friendships.some(
-    (f) =>
-      f.status === "accepted" &&
-      ((f.userId === a && f.friendId === b) || (f.friendId === a && f.userId === b))
-  );
 }

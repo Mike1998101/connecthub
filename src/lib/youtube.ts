@@ -1,6 +1,16 @@
-import { curatedArtists, getState, mutate, stripExternalUrls, uid, SERVICE_USER_ID } from "./store";
+import { curatedArtists } from "./store";
 import { clusterIdFor } from "./similarity";
 import { syncAllYoutubeChannels, runDailyIngest } from "./scrapers";
+import {
+  createPost,
+  fingerprintExists,
+  getSettings,
+  listPosts,
+  listTopics,
+  uid,
+  SERVICE_USER_ID,
+} from "./db";
+import { stripExternalUrls } from "./content";
 import type { Post } from "./types";
 
 export type YoutubeSyncResult = {
@@ -39,7 +49,7 @@ export async function syncYoutubeShorts(limit = 5): Promise<YoutubeSyncResult> {
   const results = await syncAllYoutubeChannels(limit);
   const posts = results.flatMap((r) => r.posts);
   const imported = results.reduce((n, r) => n + r.imported, 0);
-  const channels = getState().settings.youtubeChannelIds;
+  const channels = (await getSettings()).youtubeChannelIds;
 
   if (imported > 0) {
     return {
@@ -53,57 +63,44 @@ export async function syncYoutubeShorts(limit = 5): Promise<YoutubeSyncResult> {
   }
 
   const created: Post[] = [];
-  mutate((s) => {
-    for (const item of [
-      {
-        id: "aqz-KE-bpKQ",
-        title: "Big Buck Bunny moments",
-        channel: "Blender Foundation",
-        tags: ["shorts", "animation"],
-      },
-    ]) {
-      const fp = `yt:${item.id}`;
-      if (s.posts.some((p) => p.fingerprint === fp)) continue;
-      const post: Post = {
-        id: uid("ps"),
-        authorId: SERVICE_USER_ID,
-        kind: "short",
+  for (const item of [
+    {
+      id: "aqz-KE-bpKQ",
+      title: "Big Buck Bunny moments",
+      channel: "Blender Foundation",
+      tags: ["shorts", "animation"],
+    },
+  ]) {
+    const fp = `yt:${item.id}`;
+    if (await fingerprintExists(fp)) continue;
+    const post = await createPost({
+      id: uid("ps"),
+      authorId: SERVICE_USER_ID,
+      kind: "short",
+      title: item.title,
+      body: stripExternalUrls(
+        `${item.title} from ${item.channel}. Enriched for ConnectHub — engage in comments without leaving.`
+      ),
+      topicIds: ["t2"],
+      media: {
         title: item.title,
-        body: stripExternalUrls(
-          `${item.title} from ${item.channel}. Enriched for ConnectHub — engage in comments without leaving.`
-        ),
-        topicIds: ["t2"],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        upvotes: 12,
-        downvotes: 0,
-        likes: 8,
-        commentCount: 0,
-        media: {
-          title: item.title,
-          description: `Curated short · ${item.channel}`,
-          channelTitle: item.channel,
-          youtubeVideoId: item.id,
-          tags: item.tags,
-          thumbnailUrl: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-          publishedAt: new Date().toISOString(),
-          width: 1080,
-          height: 1920,
-          orientation: "portrait",
-        },
-        sourceHidden: true,
-        bookmarkedBy: [],
-        likedBy: [],
-        voters: {},
-        fingerprint: fp,
-        sourcePlatform: "youtube",
-        sourceGroup: "YouTube Channels",
-        clusterId: clusterIdFor("youtube", item.tags, ["t2"]),
-      };
-      s.posts.unshift(post);
-      created.push(post);
-    }
-  });
+        description: `Curated short · ${item.channel}`,
+        channelTitle: item.channel,
+        youtubeVideoId: item.id,
+        tags: item.tags,
+        thumbnailUrl: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+        publishedAt: new Date().toISOString(),
+        width: 1080,
+        height: 1920,
+        orientation: "portrait",
+      },
+      fingerprint: fp,
+      sourcePlatform: "youtube",
+      sourceGroup: "YouTube Channels",
+      clusterId: clusterIdFor("youtube", item.tags, ["t2"]),
+    });
+    created.push(post);
+  }
 
   return {
     imported: created.length,
@@ -115,54 +112,40 @@ export async function syncYoutubeShorts(limit = 5): Promise<YoutubeSyncResult> {
   };
 }
 
-export function syncMusicFeed(): { imported: number; posts: Post[] } {
+export async function syncMusicFeed(): Promise<{ imported: number; posts: Post[] }> {
   const created: Post[] = [];
-  mutate((s) => {
-    for (const a of curatedArtists) {
-      const fp = `yt:${a.youtubeVideoId}`;
-      const exists = s.posts.some((p) => p.fingerprint === fp && p.kind === "music");
-      if (exists) continue;
-      const tags = ["music", a.genre.toLowerCase()];
-      const post: Post = {
-        id: uid("pm"),
-        authorId: "u3",
-        kind: "music",
-        title: `${a.artist} — ${a.track}`,
-        body: a.description,
-        topicIds: ["t1"],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        upvotes: 10,
-        downvotes: 0,
-        likes: 8,
-        commentCount: 0,
-        media: {
-          title: a.track,
-          artist: a.artist,
-          album: a.album,
-          genre: a.genre,
-          description: a.description,
-          youtubeVideoId: a.youtubeVideoId,
-          tags,
-          thumbnailUrl: `https://i.ytimg.com/vi/${a.youtubeVideoId}/hqdefault.jpg`,
-          channelTitle: a.artist,
-          width: 1920,
-          height: 1080,
-          orientation: "landscape",
-        },
-        sourceHidden: true,
-        bookmarkedBy: [],
-        likedBy: [],
-        voters: {},
-        fingerprint: fp,
-        sourcePlatform: "music",
-        sourceGroup: "Music Artists",
-        clusterId: clusterIdFor("music", tags, ["t1"]),
-      };
-      s.posts.unshift(post);
-      created.push(post);
-    }
-  });
+  for (const a of curatedArtists) {
+    const fp = `yt:${a.youtubeVideoId}`;
+    if (await fingerprintExists(fp)) continue;
+    const tags = ["music", a.genre.toLowerCase()];
+    const post = await createPost({
+      id: uid("pm"),
+      authorId: "u3",
+      kind: "music",
+      title: `${a.artist} — ${a.track}`,
+      body: a.description,
+      topicIds: ["t1"],
+      media: {
+        title: a.track,
+        artist: a.artist,
+        album: a.album,
+        genre: a.genre,
+        description: a.description,
+        youtubeVideoId: a.youtubeVideoId,
+        tags,
+        thumbnailUrl: `https://i.ytimg.com/vi/${a.youtubeVideoId}/hqdefault.jpg`,
+        channelTitle: a.artist,
+        width: 1920,
+        height: 1080,
+        orientation: "landscape",
+      },
+      fingerprint: fp,
+      sourcePlatform: "music",
+      sourceGroup: "Music Artists",
+      clusterId: clusterIdFor("music", tags, ["t1"]),
+    });
+    created.push(post);
+  }
   return { imported: created.length, posts: created };
 }
 
@@ -175,19 +158,21 @@ export function listMusicCatalog() {
   }));
 }
 
-export function publicFeedStats() {
-  const s = getState();
+export async function publicFeedStats() {
+  const posts = await listPosts();
+  const topics = await listTopics();
+  const settings = await getSettings();
   const groups = Array.from(
-    new Set(s.posts.map((p) => p.sourceGroup).filter(Boolean) as string[])
+    new Set(posts.map((p) => p.sourceGroup).filter(Boolean) as string[])
   );
   return {
-    posts: s.posts.length,
-    shorts: s.posts.filter((p) => p.kind === "short").length,
-    music: s.posts.filter((p) => p.kind === "music").length,
-    articles: s.posts.filter((p) => p.kind === "article" || p.kind === "news").length,
-    topics: s.topics.length,
+    posts: posts.length,
+    shorts: posts.filter((p) => p.kind === "short").length,
+    music: posts.filter((p) => p.kind === "music").length,
+    articles: posts.filter((p) => p.kind === "article" || p.kind === "news").length,
+    topics: topics.length,
     groups,
-    visibility: s.settings.visibility,
+    visibility: settings.visibility,
   };
 }
 

@@ -202,7 +202,7 @@ async function main() {
         "devto",
         "music",
       ],
-      currentUserId: "u5",
+      currentUserId: null,
     },
   });
 
