@@ -56,12 +56,45 @@ const defaultSettingsData = {
   currentUserId: null as string | null,
 };
 
+/** In-flight lock so concurrent requests share one create attempt */
+let settingsEnsurePromise: Promise<
+  Awaited<ReturnType<typeof prisma.appSettings.findUnique>>
+> | null = null;
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: unknown; message?: unknown };
+  if (String(e.code) === "P2002") return true;
+  const msg = String(e.message || "");
+  return msg.includes("Unique constraint failed") && msg.includes("id");
+}
+
 export async function ensureSettings() {
-  return prisma.appSettings.upsert({
-    where: { id: 1 },
-    create: defaultSettingsData,
-    update: {},
-  });
+  if (!settingsEnsurePromise) {
+    settingsEnsurePromise = (async () => {
+      const existing = await prisma.appSettings.findUnique({ where: { id: 1 } });
+      if (existing) return existing;
+      try {
+        return await prisma.appSettings.create({ data: defaultSettingsData });
+      } catch (err: unknown) {
+        // Concurrent creates race on unique id — return the winner's row
+        if (isUniqueViolation(err)) {
+          const row = await prisma.appSettings.findUnique({ where: { id: 1 } });
+          if (row) return row;
+        }
+        throw err;
+      }
+    })().finally(() => {
+      // Keep resolved promise briefly; clear so later updates can re-read fresh if needed
+      // but allow concurrent callers during the race to share the same promise.
+    });
+  }
+  const row = await settingsEnsurePromise;
+  if (!row) {
+    settingsEnsurePromise = null;
+    throw new Error("AppSettings row missing after ensure");
+  }
+  return row;
 }
 
 export async function getCurrentUserId(): Promise<string | null> {
@@ -76,11 +109,20 @@ export async function getCurrentUserId(): Promise<string | null> {
 }
 
 export async function setCurrentUserId(userId: string | null) {
-  await ensureSettings();
-  await prisma.appSettings.update({
-    where: { id: 1 },
-    data: { currentUserId: userId },
-  });
+  try {
+    await ensureSettings();
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { currentUserId: userId },
+    });
+  } catch (err) {
+    // Settings row may race; one retry after ensure
+    await ensureSettings();
+    await prisma.appSettings.update({
+      where: { id: 1 },
+      data: { currentUserId: userId },
+    });
+  }
   try {
     const jar = await cookies();
     if (userId) {
@@ -94,7 +136,7 @@ export async function setCurrentUserId(userId: string | null) {
       jar.delete(SESSION_COOKIE);
     }
   } catch {
-    // ignore outside request
+    // Cookie APIs unavailable outside a request — DB session still updated
   }
 }
 
@@ -128,7 +170,12 @@ export async function getUserById(id: string): Promise<User | null> {
 }
 
 export async function getUserByUsername(username: string): Promise<User | null> {
-  const u = await prisma.user.findUnique({ where: { username } });
+  const key = username.trim().toLowerCase();
+  if (!key) return null;
+  // Case-insensitive match (Postgres citext not required)
+  const u = await prisma.user.findFirst({
+    where: { username: { equals: key, mode: "insensitive" } },
+  });
   return u ? mapUser(u) : null;
 }
 

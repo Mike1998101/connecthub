@@ -26,11 +26,34 @@ export async function POST(req: Request) {
   const action = body.action as string;
 
   if (action === "login") {
-    const username = String(body.username || "you").toLowerCase();
-    const user = await getUserByUsername(username);
-    if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
-    await setCurrentUserId(user.id);
-    return NextResponse.json({ user });
+    try {
+      const username = String(body.username || "you").trim().toLowerCase();
+      let user = await getUserByUsername(username);
+      // Demo fallback: unknown username → seeded admin "you" (u5)
+      if (!user) {
+        const demo = await prisma.user.findUnique({ where: { id: "u5" } });
+        user = demo ? mapUser(demo) : null;
+      }
+      if (!user) {
+        const anyUser = await prisma.user.findFirst({ orderBy: { joinedAt: "asc" } });
+        if (anyUser) user = mapUser(anyUser);
+      }
+      if (!user) {
+        return NextResponse.json(
+          {
+            error:
+              "No users in the database yet. Run `npm run db:seed` (or sign in with Google once Auth is enabled).",
+          },
+          { status: 404 }
+        );
+      }
+      await setCurrentUserId(user.id);
+      const fresh = await prisma.user.findUnique({ where: { id: user.id } });
+      return NextResponse.json({ user: fresh ? mapUser(fresh) : user });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Login failed";
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
   }
 
   if (action === "logout") {

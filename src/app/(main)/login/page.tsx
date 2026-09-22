@@ -3,17 +3,21 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+type AuthUser = { id?: string; displayName: string; username: string };
+
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("you");
-  const [user, setUser] = useState<{ displayName: string; username: string } | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth")
       .then((r) => r.json())
-      .then((d) => setUser(d.user || null));
+      .then((d) => setUser(d?.user?.displayName ? d.user : null))
+      .catch(() => setUser(null));
     const params = new URLSearchParams(window.location.search);
     const err = params.get("error");
     const welcome = params.get("welcome");
@@ -23,15 +27,34 @@ export default function LoginPage() {
 
   async function login(e: FormEvent) {
     e.preventDefault();
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "login", username }),
-    });
-    const d = await res.json();
-    setUser(d.user);
-    setMessage(`Signed in as ${d.user.displayName}`);
-    router.refresh();
+    setMessage("");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "login", username }),
+      });
+      const d = await res.json().catch(() => ({} as { error?: string; user?: AuthUser }));
+      if (!res.ok || !d?.user?.displayName) {
+        setUser(null);
+        setMessage(
+          d?.error ||
+            (res.status === 404
+              ? "Sign-in failed — demo users are missing. Run npm run db:seed."
+              : `Sign-in failed (${res.status})`)
+        );
+        return;
+      }
+      setUser(d.user);
+      setMessage(`Signed in as ${d.user.displayName}`);
+      router.refresh();
+    } catch {
+      setUser(null);
+      setMessage("Sign-in failed — could not reach the server");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function logout() {
@@ -52,12 +75,14 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "google_url" }),
       });
-      const d = await res.json();
-      if (d.url) {
+      const d = await res.json().catch(() => ({} as { error?: string; url?: string }));
+      if (d?.url) {
         window.location.href = d.url;
         return;
       }
-      setMessage(d.error || "Google sign-in is not configured in Supabase Auth.");
+      setMessage(d?.error || "Google sign-in is not configured in Supabase Auth.");
+    } catch {
+      setMessage("Google sign-in failed — could not reach the server");
     } finally {
       setGoogleBusy(false);
     }
@@ -90,10 +115,10 @@ export default function LoginPage() {
             onChange={(e) => setUsername(e.target.value)}
           />
         </label>
-        <button type="submit" className="btn-secondary w-full">
-          Sign in
+        <button type="submit" className="btn-secondary w-full" disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
         </button>
-        {user ? (
+        {user?.displayName ? (
           <button type="button" className="btn-secondary w-full" onClick={logout}>
             Sign out ({user.displayName})
           </button>
