@@ -9,7 +9,8 @@
     "lint": "eslint",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "mcp": "tsx mcp/server.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

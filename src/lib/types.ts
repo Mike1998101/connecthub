@@ -26,7 +26,22 @@ export type SourcePlatform =
   | "music"
   | "community"
   | "bloomberg"
-  | "cnbc";
+  | "cnbc"
+  | "forbes"
+  | "espn"
+  | "bbc_sport"
+  | "variety"
+  | "deadline"
+  | "indiewire"
+  | "nasa"
+  | "sciencedaily"
+  | "nature"
+  | "lifehacker"
+  | "bonappetit"
+  | "lonelyplanet"
+  | "healthline"
+  | "css_tricks"
+  | "smashing";
 
 export interface User {
   id: string;

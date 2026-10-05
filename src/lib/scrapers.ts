@@ -13,9 +13,11 @@ import {
   mergeUniqueUrls,
   stripExternalUrls,
 } from "./content";
-import { DEFAULT_YT_CHANNELS } from "./channels";
+import { channelMeta, DEFAULT_YT_CHANNELS } from "./channels";
+import { NICHE_RSS, NICHE_TOPICS } from "./niches";
 import { clusterIdFor, detectOrientation, extractRssItems } from "./similarity";
 import type { Post, SourcePlatform } from "./types";
+import { prisma } from "./prisma";
 
 export type IngestResult = {
   platform: SourcePlatform;
@@ -34,49 +36,36 @@ const RSS_SOURCES: Array<{
   group: string;
   kind: Post["kind"];
   tags: string[];
-}> = [
-  {
-    platform: "techcrunch",
-    url: "https://techcrunch.com/feed/",
-    topicId: "t6",
-    group: "Tech & Business Media",
-    kind: "article",
-    tags: ["tech", "startups", "funding"],
-  },
-  {
-    platform: "theverge",
-    url: "https://www.theverge.com/rss/index.xml",
-    topicId: "t6",
-    group: "Tech & Business Media",
-    kind: "news",
-    tags: ["tech", "gadgets", "culture"],
-  },
-  {
-    platform: "wired",
-    url: "https://www.wired.com/feed/rss",
-    topicId: "t6",
-    group: "Tech & Business Media",
-    kind: "article",
-    tags: ["tech", "features", "science"],
-  },
-  {
-    platform: "gizmodo",
-    url: "https://gizmodo.com/rss",
-    topicId: "t6",
-    group: "Tech & Business Media",
-    kind: "news",
-    tags: ["gadgets", "reviews"],
-  },
-  {
-    platform: "devto",
-    url: "https://dev.to/feed",
-    topicId: "t6",
-    group: "Developer Hubs",
-    kind: "article",
-    tags: ["webdev", "tutorials", "engineering"],
-  },
-];
+}> = NICHE_RSS.map((s) => ({
+  platform: s.platform,
+  url: s.url,
+  topicId: s.topicId,
+  group: s.group,
+  kind: s.kind,
+  tags: s.tags,
+}));
 
+export async function ensureNicheTopics() {
+  for (const t of NICHE_TOPICS) {
+    await prisma.topic.upsert({
+      where: { id: t.id },
+      create: {
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
+        description: t.description,
+        color: t.color,
+        postCount: 0,
+      },
+      update: {
+        slug: t.slug,
+        name: t.name,
+        description: t.description,
+        color: t.color,
+      },
+    });
+  }
+}
 async function fetchText(url: string, timeoutMs = 12000): Promise<string> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -108,6 +97,10 @@ async function publishPost(
 
 function discussionLine(tags: string[]) {
   return `Discussion prompt: Which angle matters most for ConnectHub members interested in ${tags.slice(0, 2).join(" & ")}? Share takes in comments — outbound links stay removed.`;
+}
+
+function enrichWeakLocal(title: string, platform: string, tags: string[], prompt: string) {
+  return `${title}. Curated from ${platform} for in-app reading. Topics: ${tags.join(", ")}. ${prompt}`;
 }
 
 async function enrichFromArticlePage(url?: string): Promise<{
@@ -149,37 +142,59 @@ export async function syncYoutubeChannelRss(
         skipped += 1;
         continue;
       }
+      const meta = channelMeta(channelId);
+      const isMusic = meta.niche === "music" || meta.topicId === "t1";
       const isShortGuess =
         /#shorts/i.test(item.title) ||
         /#shorts/i.test(item.description) ||
-        item.description.length < 180;
+        (!isMusic && item.description.length < 180);
       const orientation = isShortGuess ? "portrait" : "landscape";
-      const topicIds = isShortGuess ? ["t2"] : ["t2", "t4"];
+      const topicIds = isShortGuess
+        ? ["t2", meta.topicId]
+        : isMusic
+          ? ["t1"]
+          : [meta.topicId, "t4"];
+      const uniqueTopics = Array.from(new Set(topicIds));
       const tags = [
         "youtube",
-        isShortGuess ? "shorts" : "video",
-        channelId.slice(0, 8),
+        meta.niche,
+        isShortGuess ? "shorts" : isMusic ? "music" : "video",
+        meta.label.toLowerCase().replace(/\s+/g, "-"),
         ...item.title
           .toLowerCase()
           .split(/\s+/)
           .filter((w) => w.length > 4)
           .slice(0, 4),
       ];
+      const kind: Post["kind"] = isShortGuess ? "short" : isMusic ? "music" : "video";
+      const group = isMusic
+        ? "Music Artists"
+        : isShortGuess
+          ? "Shorts"
+          : `YouTube · ${meta.niche}`;
       const formatted = formatIngestBody(
-        item.description || `${item.title} — ingested from channel RSS for in-app viewing and discussion.`,
-        `Target discussion: What stood out? Drop nested comments on pacing, topic angle, or how this connects to other ${isShortGuess ? "shorts" : "uploads"} in this cluster.`
+        item.description ||
+          `${item.title} — ingested from ${meta.label} RSS for in-app viewing and discussion.`,
+        `Target discussion: What stood out? Drop nested comments on pacing, topic angle, or how this connects to other ${meta.niche} ${isShortGuess ? "shorts" : "uploads"} in this cluster.`,
+        { title: item.title, tags, platform: meta.label }
       );
       const post = await publishPost({
         authorId: SERVICE_USER_ID,
-        kind: isShortGuess ? "short" : "video",
+        kind,
         title: item.title.slice(0, 120),
         body: formatted.body,
-        topicIds,
-        imageUrls: mergeUniqueUrls(item.imageUrls, item.thumbnail ? [item.thumbnail] : undefined, formatted.imageUrls),
+        topicIds: uniqueTopics,
+        imageUrls: mergeUniqueUrls(
+          item.imageUrls,
+          item.thumbnail ? [item.thumbnail] : undefined,
+          formatted.imageUrls
+        ),
         media: {
           title: item.title,
           description: formatted.body.slice(0, 900),
-          channelTitle: channelId,
+          channelTitle: meta.label,
+          artist: isMusic ? meta.label : undefined,
+          genre: isMusic ? "Music" : undefined,
           youtubeVideoId: formatted.youtubeVideoId || videoId,
           thumbnailUrl: item.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
           publishedAt: item.publishedAt,
@@ -190,9 +205,9 @@ export async function syncYoutubeChannelRss(
         },
         sourceHidden: true,
         fingerprint: fp,
-        sourcePlatform: platform,
-        sourceGroup: "YouTube Channels",
-        clusterId: clusterIdFor(platform, tags, topicIds),
+        sourcePlatform: isMusic ? "music" : platform,
+        sourceGroup: group,
+        clusterId: clusterIdFor(isMusic ? "music" : platform, tags, uniqueTopics),
       });
       posts.push(post);
     }
@@ -242,7 +257,8 @@ export async function syncRssSource(
       }
       const formatted = formatIngestBody(
         item.description || item.title,
-        discussionLine(tags)
+        discussionLine(tags),
+        { title: item.title, tags, platform }
       );
       let imageUrls = mergeUniqueUrls(
         item.imageUrls,
@@ -255,16 +271,20 @@ export async function syncRssSource(
         imageUrls = mergeUniqueUrls(imageUrls, extra.imageUrls);
         yt = yt || extra.youtubeVideoId;
       }
+      const body =
+        formatted.body.length < 80
+          ? enrichWeakLocal(item.title, platform, tags, discussionLine(tags))
+          : formatted.body;
       const post = await publishPost({
         authorId: SERVICE_USER_ID,
         kind: yt ? "video" : kind,
         title: item.title.slice(0, 120),
-        body: formatted.body,
+        body,
         topicIds: [topicId],
         imageUrls,
         media: {
           title: item.title,
-          description: formatted.body.slice(0, 900),
+          description: body.slice(0, 900),
           channelTitle: platform,
           thumbnailUrl: item.thumbnail || imageUrls[0],
           publishedAt: item.publishedAt,
@@ -368,7 +388,8 @@ export async function syncHackerNews(limit = 8): Promise<IngestResult> {
 export async function syncReddit(
   subreddit = "technology",
   minScore = 200,
-  limit = 6
+  limit = 6,
+  topicId = "t6"
 ): Promise<IngestResult> {
   const platform: SourcePlatform = "reddit";
   try {
@@ -411,7 +432,8 @@ export async function syncReddit(
       const raw = `${d.selftext_html || d.selftext || d.title}\n\nr/${subreddit} · ${d.score} upvotes · ${d.num_comments} comments`;
       const formatted = formatIngestBody(
         raw,
-        "Comment prompt: Agree with the community take, or push back? Keep the thread here."
+        "Comment prompt: Agree with the community take, or push back? Keep the thread here.",
+        { title: d.title, tags, platform: `r/${subreddit}` }
       );
       const preview = d.preview?.images?.[0]?.source?.url?.replace(/&amp;/g, "&");
       const thumb = d.thumbnail && d.thumbnail.startsWith("http") ? d.thumbnail : undefined;
@@ -424,7 +446,7 @@ export async function syncReddit(
         kind: yt ? "video" : imageUrls.length ? "image" : "news",
         title: d.title.slice(0, 120),
         body: formatted.body,
-        topicIds: ["t6"],
+        topicIds: [topicId],
         imageUrls,
         media: {
           title: d.title,
@@ -442,7 +464,7 @@ export async function syncReddit(
         fingerprint: fp,
         sourcePlatform: platform,
         sourceGroup: "Social News Aggregators",
-        clusterId: clusterIdFor(platform, tags, ["t6"]),
+        clusterId: clusterIdFor(platform, tags, [topicId]),
         upvotes: Math.min(d.score, 500),
       });
       posts.push(post);
@@ -583,14 +605,37 @@ export async function runDailyIngest(opts?: {
   ranAt: string;
   groups: string[];
 }> {
+  await ensureNicheTopics();
   const enabled = new Set((await getSettings()).enabledSources);
   const results: IngestResult[] = [];
 
-  if (enabled.has("youtube")) {
-    results.push(...(await syncAllYoutubeChannels(opts?.youtubeLimit ?? 4)));
+  if (enabled.has("youtube") || enabled.has("music")) {
+    results.push(...(await syncAllYoutubeChannels(opts?.youtubeLimit ?? 3)));
   }
+
+  // Always refresh known-artist music catalog when music is enabled
+  if (enabled.has("music")) {
+    const { syncMusicFeed } = await import("./youtube");
+    const music = await syncMusicFeed();
+    results.push({
+      platform: "music",
+      imported: music.imported,
+      skipped: 0,
+      posts: music.posts,
+    });
+  }
+
   for (const src of RSS_SOURCES) {
-    if (!enabled.has(src.platform)) continue;
+    // Allow niche platforms even if not in enabledSources list yet
+    if (!enabled.has(src.platform) && !enabled.has("youtube")) {
+      // still ingest niche feeds when core curation is on
+      const coreOn =
+        enabled.has("techcrunch") ||
+        enabled.has("devto") ||
+        enabled.has("wired") ||
+        enabled.has("theverge");
+      if (!coreOn) continue;
+    }
     results.push(
       await syncRssSource(
         src.platform,
@@ -599,14 +644,27 @@ export async function runDailyIngest(opts?: {
         src.group,
         src.kind,
         src.tags,
-        opts?.rssLimit ?? 5
+        opts?.rssLimit ?? 4
       )
     );
   }
   if (enabled.has("hackernews")) results.push(await syncHackerNews(opts?.rssLimit ?? 6));
   if (enabled.has("reddit")) {
-    results.push(await syncReddit("technology", 150, 5));
-    results.push(await syncReddit("artificial", 100, 4));
+    const subs: Array<{ sub: string; topicId: string; min: number }> = [
+      { sub: "technology", topicId: "t6", min: 150 },
+      { sub: "science", topicId: "t7", min: 100 },
+      { sub: "sports", topicId: "t8", min: 120 },
+      { sub: "movies", topicId: "t16", min: 100 },
+      { sub: "food", topicId: "t12", min: 80 },
+      { sub: "travel", topicId: "t13", min: 80 },
+      { sub: "personalfinance", topicId: "t15", min: 100 },
+      { sub: "design", topicId: "t18", min: 80 },
+      { sub: "webdev", topicId: "t17", min: 80 },
+      { sub: "artificial", topicId: "t6", min: 100 },
+    ];
+    for (const s of subs) {
+      results.push(await syncReddit(s.sub, s.min, 3, s.topicId));
+    }
   }
   if (enabled.has("github")) results.push(await syncGithubTrending(5));
 

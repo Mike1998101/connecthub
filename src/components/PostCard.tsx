@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { MediaEmbed } from "./MediaEmbed";
+import { ShareButton } from "./ShareButton";
 
 export type FeedPost = {
   id: string;
@@ -91,6 +92,20 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
   useEffect(() => {
     setSimilar(post.similar || []);
   }, [post.similar]);
+
+  useEffect(() => {
+    fetch("/api/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: post.media?.youtubeVideoId ? "watch" : "view",
+        postId: post.id,
+        kind: post.kind,
+        topicIds: (post.topics || []).map((t) => t.id),
+        tags: post.media?.tags || [],
+      }),
+    }).catch(() => null);
+  }, [post.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(action: string, extra: Record<string, unknown> = {}) {
     setBusy(true);
@@ -347,6 +362,7 @@ export function PostCard({ post, meId, authors = {}, onChanged }: Props) {
         <button type="button" className="action-btn" onClick={loadSimilar}>
           Similar
         </button>
+        <ShareButton title={post.title} postId={post.id} text={post.body.slice(0, 120)} />
       </div>
 
       {showSimilar && similar.length ? (

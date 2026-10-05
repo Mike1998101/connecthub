@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CreatePost } from "@/components/CreatePost";
 import { FeedPost, PostCard } from "@/components/PostCard";
+import { RecommendRail } from "@/components/RecommendRail";
 
 type Topic = { id: string; name: string; slug: string; color: string };
 
@@ -12,6 +13,7 @@ export default function HomeClient() {
   const sort = params.get("sort") || "chronological";
   const topic = params.get("topic") || "";
   const group = params.get("group") || "";
+  const kind = params.get("kind") || "";
   const focus = params.get("focus") || "";
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -27,6 +29,7 @@ export default function HomeClient() {
     const q = new URLSearchParams({ sort });
     if (topic) q.set("topic", topic);
     if (group) q.set("group", group);
+    if (kind) q.set("kind", kind);
     const [feed, topicRes, auth, users] = await Promise.all([
       fetch(`/api/posts?${q}`).then((r) => r.json()),
       fetch("/api/topics").then((r) => r.json()),
@@ -43,7 +46,7 @@ export default function HomeClient() {
     }
     setAuthors(map);
     setLoading(false);
-  }, [sort, topic, group]);
+  }, [sort, topic, group, kind]);
 
   useEffect(() => {
     load();
@@ -64,15 +67,25 @@ export default function HomeClient() {
     []
   );
 
+  const kindTabs = [
+    { id: "", label: "All", href: "/" },
+    { id: "posts", label: "Posts", href: "/?kind=posts" },
+    { id: "short", label: "Shorts", href: "/shorts" },
+    { id: "music", label: "Music", href: "/?kind=music&topic=music" },
+    { id: "video", label: "Video", href: "/?kind=video" },
+  ];
+
   return (
     <div className="space-y-4">
       <section className="px-4 sm:px-0">
         <h1 className="page-title rise-in">Community feed</h1>
         <p className="page-sub">
-          Shorts, music, and daily curated tech from multiple sources play and discuss in-app.
-          External links are stripped so conversations stay on ConnectHub.
+          Shorts, music from known artists, science, sports, design, and more — play and discuss
+          in-app. External links are stripped so conversations stay on ConnectHub.
         </p>
       </section>
+
+      <RecommendRail />
 
       <div className="flex gap-2 overflow-x-auto px-4 sm:px-0">
         {tabs.map((t) => (
@@ -80,6 +93,22 @@ export default function HomeClient() {
             key={t.id}
             href={t.href}
             className={`nav-chip ${sort === t.id ? "nav-chip-active" : ""}`}
+          >
+            {t.label}
+          </a>
+        ))}
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto px-4 sm:px-0">
+        {kindTabs.map((t) => (
+          <a
+            key={t.id || "all"}
+            href={t.href}
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              (kind || "") === t.id || (t.id === "short" && kind === "short")
+                ? "bg-[#16324f] text-white"
+                : "bg-white text-slate-600"
+            }`}
           >
             {t.label}
           </a>
@@ -145,6 +174,11 @@ export default function HomeClient() {
               <PostCard post={p} meId={meId} authors={authors} onChanged={load} />
             </div>
           ))}
+          {!posts.length ? (
+            <p className="px-4 text-sm text-slate-500">
+              Nothing in this filter yet — try Music, run Curate now, or open Topics.
+            </p>
+          ) : null}
         </div>
       )}
     </div>

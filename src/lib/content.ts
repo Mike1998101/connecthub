@@ -147,10 +147,42 @@ export function stripExternalUrls(text: string): string {
     .replace(/youtube\.com\/\S+/gi, "");
 }
 
+/** When scrapers leave only a URL stub (common on Dev.to), build a readable blurb */
+export function enrichWeakBody(
+  title: string,
+  plain: string,
+  tags: string[],
+  platform: string,
+  fallbackExtra?: string
+): string {
+  const cleaned = plain
+    .replace(/\[link removed[^\]]*\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const mostlyLink =
+    cleaned.length < 100 ||
+    /^(https?:|www\.|\[link)/i.test(cleaned) ||
+    (cleaned.match(/\[link removed/gi) || []).length >= 1 && cleaned.length < 200;
+  if (!mostlyLink && cleaned.length >= 80) return plain.slice(0, 1800);
+  const tagLine = tags.length ? `Topics: ${tags.slice(0, 6).join(", ")}.` : "";
+  const extra = fallbackExtra?.trim() || "";
+  return [
+    `${title}.`,
+    `Curated from ${platform} for ConnectHub — read and discuss here without leaving the app.`,
+    tagLine,
+    extra,
+    cleaned && cleaned.length > 20 ? cleaned.slice(0, 400) : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 1800);
+}
+
 /** Full pipeline for RSS/HTML article bodies shown in the feed */
 export function formatIngestBody(
   raw: string,
-  discussionPrompt?: string
+  discussionPrompt?: string,
+  meta?: { title?: string; tags?: string[]; platform?: string }
 ): {
   body: string;
   imageUrls: string[];
@@ -158,7 +190,15 @@ export function formatIngestBody(
 } {
   const cleaned = sanitizeScrapedContent(raw);
   let plain = stripExternalUrls(cleaned.body).slice(0, 1800).trim();
-  if (discussionPrompt && !/discussion prompt:/i.test(plain)) {
+  if (meta?.title) {
+    plain = enrichWeakBody(
+      meta.title,
+      plain,
+      meta.tags || [],
+      meta.platform || "source",
+      discussionPrompt
+    );
+  } else if (discussionPrompt && !/discussion prompt:/i.test(plain)) {
     plain = `${plain}\n\n${discussionPrompt}`.trim();
   }
   return {

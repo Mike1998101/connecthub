@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
+import { SearchBar } from "./SearchBar";
 
 const primaryNav = [
   { href: "/", label: "Feed" },
+  { href: "/shorts", label: "Shorts" },
   { href: "/topics", label: "Topics" },
   { href: "/analytics", label: "Trending" },
   { href: "/top-creators", label: "Creators" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/guidelines", label: "Guidelines" },
 ];
 
@@ -20,6 +23,7 @@ const socialNav = [
   { href: "/notifications", label: "Alerts" },
   { href: "/bookmarks", label: "Saved" },
   { href: "/profile", label: "Profile" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/settings", label: "Settings" },
   { href: "/login", label: "Login" },
 ];
@@ -43,11 +47,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 border-b border-sky-100/80 bg-[#eef6fb]/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-3 py-3 sm:px-4">
+        <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-3 py-3 sm:px-4">
           <Link href="/" className="font-display text-2xl font-bold tracking-tight text-[#16324f]">
             ConnectHub
           </Link>
-          <nav className="ml-auto hidden items-center gap-1 md:flex">
+          <div className="mx-2 hidden min-w-0 flex-1 md:block lg:max-w-md">
+            <SearchBar />
+          </div>
+          <nav className="ml-auto hidden items-center gap-1 xl:flex">
             {primaryNav.map((n) => (
               <Link
                 key={n.href}
@@ -70,10 +77,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             {me ? me.displayName.split(" ")[0] : "Login"}
           </Link>
         </div>
-        <div className="flex gap-1 overflow-x-auto border-t border-sky-100/60 px-3 py-2 md:hidden">
+        <div className="border-t border-sky-100/60 px-3 py-2 md:hidden">
+          <SearchBar />
+        </div>
+        <div className="flex gap-1 overflow-x-auto border-t border-sky-100/60 px-3 py-2 xl:hidden">
           {[...primaryNav, ...socialNav].map((n) => (
             <Link
-              key={n.href}
+              key={n.href + n.label}
               href={n.href}
               className={`nav-chip shrink-0 ${pathname === n.href ? "nav-chip-active" : ""}`}
             >
@@ -83,7 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-6xl gap-5 px-0 py-4 sm:px-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-[1400px] gap-4 px-0 py-4 sm:px-3 lg:grid-cols-[200px_minmax(0,1fr)_240px] lg:gap-5">
         <aside className="hidden lg:block">
           <div className="card sticky top-24 space-y-1 p-3">
             <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -91,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </p>
             {socialNav.map((n) => (
               <Link
-                key={n.href}
+                key={n.href + n.label}
                 href={n.href}
                 className={`block rounded-xl px-3 py-2 text-sm font-medium ${
                   pathname === n.href
@@ -109,7 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 fetch("/api/youtube/sync", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ mode: "daily", limit: 5 }),
+                  body: JSON.stringify({ mode: "daily", limit: 4 }),
                 }).then(async (r) => {
                   const d = await r.json();
                   if (!r.ok) alert(d.error || "Admin only");
@@ -117,14 +127,36 @@ export function AppShell({ children }: { children: ReactNode }) {
                 })
               }
             >
-              Run daily curation
+              Curate now
             </button>
-            <Link href="/settings" className="btn-ghost mt-1 block w-full text-center text-sm">
-              Schedule & visibility
+            <Link href="/dashboard" className="btn-ghost mt-1 block w-full text-center text-sm">
+              Analytics & settings
             </Link>
           </div>
         </aside>
         <main className="min-w-0 pb-16">{children}</main>
+        <aside className="hidden xl:block">
+          <div className="sticky top-24 space-y-3">
+            <div className="card space-y-2 p-3 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Quick</p>
+              <Link href="/chat?mode=peer" className="block rounded-lg px-2 py-1.5 hover:bg-sky-50">
+                Peer chat
+              </Link>
+              <Link href="/chat?mode=group" className="block rounded-lg px-2 py-1.5 hover:bg-sky-50">
+                Group chat
+              </Link>
+              <Link href="/friends" className="block rounded-lg px-2 py-1.5 hover:bg-sky-50">
+                Add friends
+              </Link>
+              <Link href="/?topic=music" className="block rounded-lg px-2 py-1.5 hover:bg-sky-50">
+                Music feed
+              </Link>
+              <Link href="/shorts" className="block rounded-lg px-2 py-1.5 hover:bg-sky-50">
+                Shorts only
+              </Link>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

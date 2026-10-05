@@ -23,6 +23,7 @@ export async function GET(req: Request) {
   const sort = (searchParams.get("sort") || "chronological") as FeedSort;
   const topic = searchParams.get("topic");
   const group = searchParams.get("group");
+  const kind = searchParams.get("kind");
   const settings = await getSettings();
   const me = await getCurrentUserId();
 
@@ -38,8 +39,16 @@ export async function GET(req: Request) {
   let posts = await listPosts({
     topicId: topicRow?.id,
     group: group || undefined,
+    kind: kind || undefined,
   });
 
+  // Separate shorts feed vs main posts when kind=posts
+  if (kind === "posts") {
+    posts = (await listPosts({
+      topicId: topicRow?.id,
+      group: group || undefined,
+    })).filter((p) => p.kind !== "short");
+  }
   if (sort === "trending") {
     posts.sort((a, b) => score(b) - score(a));
   } else if (sort === "topic" && !topic) {

@@ -169,28 +169,43 @@ body {
 .yt-mask {
   position: absolute;
   z-index: 5;
-  background: linear-gradient(135deg, transparent 30%, #0f1720 70%);
+  pointer-events: auto;
+  background: #0f1720;
 }
 .yt-mask-br {
   right: 0;
   bottom: 0;
-  width: 28%;
-  height: 18%;
-  background: linear-gradient(to top left, #0f1720 35%, transparent 70%);
+  width: 38%;
+  height: 22%;
+  background: linear-gradient(to top left, #0f1720 55%, transparent 85%);
 }
 .yt-mask-tr {
   right: 0;
   top: 0;
-  width: 34%;
-  height: 14%;
-  background: linear-gradient(to bottom left, #0f1720 40%, transparent 75%);
+  width: 42%;
+  height: 16%;
+  background: linear-gradient(to bottom left, #0f1720 55%, transparent 85%);
 }
 .yt-mask-tl {
   left: 0;
   top: 0;
-  width: 40%;
+  width: 48%;
+  height: 14%;
+  background: linear-gradient(to bottom right, #0f1720 50%, transparent 85%);
+}
+.yt-mask-bl {
+  left: 0;
+  bottom: 0;
+  width: 28%;
+  height: 16%;
+  background: linear-gradient(to top right, #0f1720 45%, transparent 80%);
+}
+.yt-mask-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
   height: 12%;
-  background: linear-gradient(to bottom right, rgba(15, 23, 32, 0.85) 20%, transparent 80%);
+  background: linear-gradient(to top, #0f1720 40%, transparent 100%);
 }
 
 @keyframes rise-in {

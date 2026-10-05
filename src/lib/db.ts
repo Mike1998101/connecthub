@@ -52,6 +52,20 @@ const defaultSettingsData = {
     "github",
     "devto",
     "music",
+    "nasa",
+    "espn",
+    "variety",
+    "bloomberg",
+    "cnbc",
+    "forbes",
+    "lifehacker",
+    "bonappetit",
+    "lonelyplanet",
+    "healthline",
+    "css_tricks",
+    "smashing",
+    "sciencedaily",
+    "indiewire",
   ],
   currentUserId: null as string | null,
 };
@@ -202,12 +216,16 @@ export async function listPosts(opts?: {
   group?: string;
   authorId?: string;
   bookmarkedBy?: string;
+  kind?: string;
+  kinds?: string[];
 }) {
   const where: Prisma.PostWhereInput = {};
   if (opts?.group) where.sourceGroup = opts.group;
   if (opts?.authorId) where.authorId = opts.authorId;
   if (opts?.bookmarkedBy) where.bookmarkedBy = { has: opts.bookmarkedBy };
   if (opts?.topicId) where.topics = { some: { topicId: opts.topicId } };
+  if (opts?.kind) where.kind = opts.kind;
+  if (opts?.kinds?.length) where.kind = { in: opts.kinds };
 
   await persistSanitizedHtmlPosts();
   const rows = await prisma.post.findMany({

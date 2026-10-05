@@ -6,14 +6,13 @@ type Props = {
   videoId: string;
   title?: string;
   poster?: string;
-  /** Prefer explicit orientation; falls back to aspect prop */
   orientation?: "portrait" | "landscape" | "square";
   aspect?: "short" | "wide";
 };
 
 /**
- * In-app player: youtube-nocookie + modest branding + CSS masks.
- * Click-to-play satisfies autoplay policies so audio is unmuted (mute=0).
+ * In-app player: youtube-nocookie + modest branding + CSS masks covering YT marks.
+ * Click-to-play; logo corners blocked so users stay on ConnectHub.
  */
 export function MediaEmbed({
   videoId,
@@ -39,6 +38,7 @@ export function MediaEmbed({
       disablekb: "0",
       playsinline: "1",
       enablejsapi: "0",
+      cc_load_policy: "0",
     });
     if (typeof window !== "undefined") {
       params.set("origin", window.location.origin);
@@ -47,10 +47,10 @@ export function MediaEmbed({
   }, [videoId]);
 
   const frameClass = isPortrait
-    ? "aspect-[9/16] max-h-[78vh] w-full sm:max-h-[70vh]"
+    ? "aspect-[9/16] max-h-[85vh] w-full sm:max-h-[78vh]"
     : orientation === "square"
-      ? "aspect-square max-h-[70vh] w-full"
-      : "aspect-video w-full";
+      ? "aspect-square max-h-[78vh] w-full"
+      : "aspect-video w-full min-h-[220px] sm:min-h-[320px]";
 
   return (
     <div className={`media-shell relative w-full overflow-hidden bg-[#0f1720] ${frameClass}`}>
@@ -77,22 +77,32 @@ export function MediaEmbed({
             </svg>
           </span>
           <span className="absolute bottom-3 left-3 right-3 z-10 truncate text-left text-sm font-medium text-white drop-shadow">
-            {title} · sound on
+            {title} · ConnectHub · sound on
+          </span>
+          <span className="absolute left-3 top-3 z-10 rounded bg-[#0f1720]/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+            ConnectHub
           </span>
         </button>
       ) : (
         <>
           <iframe
-            className="absolute inset-0 h-full w-full border-0"
+            className="absolute inset-0 h-[calc(100%+48px)] w-[calc(100%+2px)] -translate-y-3 border-0"
             src={src}
             title={title || "ConnectHub media"}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen={false}
             referrerPolicy="strict-origin-when-cross-origin"
+            sandbox="allow-scripts allow-same-origin allow-presentation"
           />
-          <div className="yt-mask yt-mask-br pointer-events-auto" aria-hidden />
-          <div className="yt-mask yt-mask-tr pointer-events-auto" aria-hidden />
-          <div className="yt-mask yt-mask-tl pointer-events-none" aria-hidden />
+          {/* Cover YouTube logo / title / watch-on marks */}
+          <div className="yt-mask yt-mask-br" aria-hidden />
+          <div className="yt-mask yt-mask-tr" aria-hidden />
+          <div className="yt-mask yt-mask-tl" aria-hidden />
+          <div className="yt-mask yt-mask-bl" aria-hidden />
+          <div className="yt-mask yt-mask-bottom" aria-hidden />
+          <div className="pointer-events-none absolute left-2 top-2 z-[6] rounded bg-[#0f1720]/9 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+            ConnectHub
+          </div>
         </>
       )}
     </div>

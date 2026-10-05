@@ -117,14 +117,15 @@ export async function syncMusicFeed(): Promise<{ imported: number; posts: Post[]
   for (const a of curatedArtists) {
     const fp = `yt:${a.youtubeVideoId}`;
     if (await fingerprintExists(fp)) continue;
-    const tags = ["music", a.genre.toLowerCase()];
+    const tags = ["music", a.genre.toLowerCase(), a.artist.toLowerCase().replace(/\s+/g, "-")];
     const post = await createPost({
       id: uid("pm"),
-      authorId: "u3",
+      authorId: SERVICE_USER_ID,
       kind: "music",
       title: `${a.artist} — ${a.track}`,
       body: a.description,
       topicIds: ["t1"],
+      imageUrls: [`https://i.ytimg.com/vi/${a.youtubeVideoId}/hqdefault.jpg`],
       media: {
         title: a.track,
         artist: a.artist,
@@ -138,6 +139,7 @@ export async function syncMusicFeed(): Promise<{ imported: number; posts: Post[]
         width: 1920,
         height: 1080,
         orientation: "landscape",
+        publishedAt: new Date().toISOString(),
       },
       fingerprint: fp,
       sourcePlatform: "music",
